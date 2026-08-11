@@ -27,8 +27,6 @@ import sys
 from datetime import date
 from email.message import EmailMessage
 
-from .run import CANARIES
-
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 UNIVERSE = os.path.join(ROOT, "data", "universe.csv")
 DROPPED = os.path.join(ROOT, "data", "universe_dropped.csv")
@@ -37,6 +35,9 @@ HTML_OUT = os.path.join(ROOT, "data", "email.html")
 
 # The exact bases; the gross-assets figure is an estimate and labelled so.
 EXACT = ("price_over_nav_net", "published")
+
+# A discount this wide is the report's headline material.
+DEEP = -0.20
 
 INK, MUTED, LINE = "#1f2430", "#6b7280", "#e5e7eb"
 RED, GREEN = "#b91c1c", "#15803d"
@@ -69,22 +70,29 @@ def summarise(rows):
                          sum(1 for d in g if d > 0)))
     exact = [r for r in rows
              if r["discount"] is not None and r["discount_basis"] in EXACT]
-    canaries = []
-    for code, expected in CANARIES.items():
-        hit = next((r for r in rows if r["code"] == code), None)
-        if hit and hit["discount"] is not None:
-            canaries.append((code, hit["discount"], hit["discount_basis"], expected))
+
+    # Average and median by market, on the trustworthy bases only — folding in
+    # the gross-assets estimates would drag every mean wide by the gearing
+    # bias and present it as a market fact.
+    def _stats(g):
+        d = sorted(x["discount"] for x in g)
+        return (len(d), sum(d) / len(d), _pctl(d, .50)) if d else (0, None, None)
+
+    by_market = [(ex, *_stats([r for r in exact if r["exchange"] == ex]))
+                 for ex in sorted({r["exchange"] for r in exact})]
+    by_market.append(("All", *_stats(exact)))
+
     return {
         "as_of": date.today().isoformat(),
         "total": len(rows),
         "by_ex": {ex: len(g) for ex, g in sorted(by_ex.items())},
         "n_exact": len(exact),
         "by_basis": by_basis,
-        "canaries": canaries,
-        "largest": sorted(rows, key=lambda r: -(r["market_cap"] or 0))[:10],
-        # Widest is only meaningful on a basis that is actually right; a
-        # gross-assets figure would top this table on its bias alone.
-        "widest": sorted(exact, key=lambda r: r["discount"])[:15],
+        "by_market": by_market,
+        # Every discount wider than 20%, on a basis that is actually right; a
+        # gross-assets figure would fill this table on its bias alone.
+        "deep": sorted((r for r in exact if r["discount"] <= DEEP),
+                       key=lambda r: r["discount"]),
     }
 
 
@@ -137,26 +145,19 @@ def render_html(s):
         + _td(_pct(p90), "right") + _td(prem, "right") + "</tr>"
         for b, n, p10, med, p90, prem in s["by_basis"])
 
-    canary_rows = "".join(
-        "<tr>" + _td(f"<b>{e(code)}</b>") + _td(_pct(d), "right")
-        + _td(f"<code style='font-size:12px'>{e(basis)}</code>")
-        + _td(f'<span style="color:{MUTED}">{e(expected)}</span>') + "</tr>"
-        for code, d, basis, expected in s["canaries"])
+    market_rows = "".join(
+        "<tr>" + _td("<b>All</b>" if ex == "All" else f"<b>{e(ex)}</b>")
+        + _td(n, "right") + _td(_pct(avg), "right") + _td(_pct(med), "right")
+        + "</tr>"
+        for ex, n, avg, med in s["by_market"])
 
-    widest_rows = "".join(
+    deep_rows = "".join(
         "<tr>" + _td(f"<b>{e(r['code'])}</b>") + _td(e(r["exchange"]))
-        + _td(e((r["name"] or "")[:40]))
+        + _td(e((r["name"] or "")[:34]))
+        + _td(f'<span style="color:{MUTED}">{e((r["sector"] or "—")[:32])}</span>')
         + _td(_money(r["market_cap"], r["currency"]), "right")
         + _td(_pct(r["discount"]), "right") + "</tr>"
-        for r in s["widest"])
-
-    largest_rows = "".join(
-        "<tr>" + _td(f"<b>{e(r['code'])}</b>") + _td(e(r["exchange"]))
-        + _td(e((r["name"] or "")[:40]))
-        + _td(_money(r["market_cap"], r["currency"]), "right")
-        + _td(_money(r["nta_total"], r["currency"]), "right")
-        + _td(_pct(r["discount"]), "right") + "</tr>"
-        for r in s["largest"])
+        for r in s["deep"])
 
     return f"""<!doctype html>
 <html><body style="margin:0;padding:0;background:#f3f4f6">
@@ -177,16 +178,16 @@ def render_html(s):
       Discounts, by how they were arrived at</div>
     {_table(["basis", "n", "p10", "median", "p90", "prem"], basis_rows)}
 
-    <div style="font-size:15px;font-weight:700;color:{INK}">Canaries</div>
-    {_table(["code", "disc", "basis", "expected"], canary_rows)}
+    <div style="font-size:15px;font-weight:700;color:{INK}">
+      Average discount by market <span style="font-weight:400;color:{MUTED};
+      font-size:12px">(exact &amp; published bases only)</span></div>
+    {_table(["market", "n", "average", "median"], market_rows)}
 
     <div style="font-size:15px;font-weight:700;color:{INK}">
-      15 widest discounts <span style="font-weight:400;color:{MUTED};
-      font-size:12px">(exact &amp; published bases only)</span></div>
-    {_table(["code", "exch", "name", "mkt cap", "disc"], widest_rows)}
-
-    <div style="font-size:15px;font-weight:700;color:{INK}">10 largest funds</div>
-    {_table(["code", "exch", "name", "mkt cap", "NTA total", "disc"], largest_rows)}
+      All discounts wider than 20%
+      <span style="font-weight:400;color:{MUTED};font-size:12px">
+      ({len(s["deep"])} funds; exact &amp; published bases only)</span></div>
+    {_table(["code", "exch", "name", "invests in", "mkt cap", "disc"], deep_rows)}
 
     <div style="font-size:12px;color:{MUTED};line-height:1.6;border-top:1px solid {LINE};
       padding-top:14px">
@@ -194,7 +195,8 @@ def render_html(s):
       month-end price against net shareholders' funds). <code>published</code> is the
       ASX's own stated premium/discount. <code>mcap_over_gross_assets</code> is an
       estimate biased wide by gearing — geared funds read cheaper than they are —
-      and is excluded from the widest-discounts table for that reason.<br>
+      and is excluded from the market averages and the wider-than-20% table for
+      that reason.<br>
       The full table, every dropped row and its reason are in the attached
       spreadsheet.
     </div>
@@ -213,9 +215,14 @@ def render_text(s):
     for b, n, p10, med, p90, prem in s["by_basis"]:
         lines.append(f"  {b:24} {n:>4}  {p10*100:+6.1f}%  {med*100:+6.1f}%  "
                      f"{p90*100:+6.1f}%  {prem}")
-    lines += ["", "Canaries:"]
-    for code, d, basis, expected in s["canaries"]:
-        lines.append(f"  {code:6} {d*100:+6.1f}%  {basis:24} {expected}")
+    lines += ["", "Average discount by market (exact & published bases):"]
+    for ex, n, avg, med in s["by_market"]:
+        lines.append(f"  {ex:5} n={n:<4} avg {avg*100:+6.1f}%  median {med*100:+6.1f}%"
+                     if n else f"  {ex:5} n=0")
+    lines += ["", f"Discounts wider than 20% ({len(s['deep'])} funds):"]
+    for r in s["deep"]:
+        lines.append(f"  {r['code']:6} {r['exchange']:4} {r['discount']*100:+6.1f}%  "
+                     f"{(r['sector'] or '—')[:30]:32} {(r['name'] or '')[:30]}")
     lines += ["", "Full table attached as universe.xlsx"]
     return "\n".join(lines)
 
@@ -259,6 +266,7 @@ def main(argv=None) -> int:
                   *[(f"{ex} funds", n) for ex, n in s["by_ex"].items()],
                   ("Exact discounts", s["n_exact"])],
         "by_basis": s["by_basis"],
+        "by_market": s["by_market"],
         "notes": [
             "price_over_nav_net — exact: AIC MIR month-end price vs net shareholders' funds",
             "published — the ASX states its own premium/discount",

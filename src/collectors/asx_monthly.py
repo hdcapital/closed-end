@@ -103,6 +103,11 @@ class AsxRecord:
     ticker: str
     name: Optional[str] = None
     mandate: Optional[str] = None
+    # The report groups its rows under banner lines — "Equity - Australia",
+    # "Fixed Income - Global Dollar" — which are the report's own few-word
+    # answer to "what does this fund invest in". The Type column, by contrast,
+    # says only "Shares".
+    section: Optional[str] = None
     market_cap: Optional[float] = None
     shares_on_issue: Optional[float] = None
     price: Optional[float] = None
@@ -242,11 +247,16 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
             f" | header seen: {tabular.header_row_text(cmap.raw_header)}")
 
     seen, rejected = set(), []
+    section = None
     for row in tabular.data_rows(rows, idx, cmap.index["ticker"]):
-        ticker = str(cmap.get(row, "ticker") or "").strip().upper()
-        # ASX codes are 3-6 alphanumerics; this drops sub-heading rows
-        # ("Domestic Equity", "Total") that share the code column.
+        raw_key = str(cmap.get(row, "ticker") or "").strip()
+        ticker = raw_key.upper()
+        # ASX codes are 3-6 alphanumerics; anything longer in the code column
+        # is a section banner ("Equity - Australia Small/Mid Cap") naming what
+        # the funds beneath it invest in — remembered, not discarded.
         if not re.fullmatch(r"[A-Z0-9]{2,6}", ticker):
+            if raw_key and cmap.get(row, "market_cap") is None:
+                section = raw_key
             continue
         if ticker in seen:
             continue
@@ -265,6 +275,7 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
             ticker=ticker,
             name=name,
             mandate=mandate,
+            section=section,
             market_cap=mcap * MARKET_CAP_MULTIPLIER if mcap is not None else None,
             shares_on_issue=to_float(cmap.get(row, "shares")),
             price=_nta_level(cmap.get(row, "price"), rejected, f"{ticker}.price"),

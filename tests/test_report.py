@@ -4,28 +4,40 @@
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.harvest import xlsx_report
 from src.harvest.email_report import build_email, render_html, summarise
 
-# Hand-made universe: one exact UK premium, one exact UK discount, one ASX
-# published discount, and one gross-assets estimate that is numerically the
-# widest of all — which is exactly why it must stay out of the widest table.
+# Hand-made universe: an exact UK premium, an exact UK deep discount, a
+# published ASX discount just inside 20%, a published ASX one outside it, and
+# a gross-assets estimate that is numerically the widest of all — which is
+# exactly why it must stay out of the deep-discount table.
 ROWS = [
     dict(code="CTY", exchange="LSE", name="City of London", currency="GBP",
+         sector="UK Equity Income",
          market_cap=3.06e9, nta_total=2.97e9, nta_basis="net_shareholders_funds",
          nta_per_share=5.7545, price=5.93, discount=0.031,
          discount_basis="price_over_nav_net"),
-    dict(code="SMT", exchange="LSE", name="Scottish Mortgage", currency="GBP",
-         market_cap=1.43e10, nta_total=1.51e10, nta_basis="net_shareholders_funds",
-         nta_per_share=14.1178, price=13.305, discount=-0.058,
+    dict(code="CLDN", exchange="LSE", name="Caledonia Investments", currency="GBP",
+         sector="Flexible Investment",
+         market_cap=2.0e9, nta_total=3.1e9, nta_basis="net_shareholders_funds",
+         nta_per_share=56.0, price=36.6, discount=-0.346,
          discount_basis="price_over_nav_net"),
     dict(code="AFI", exchange="ASX", name="Australian Foundation", currency="AUD",
+         sector="Equity - Australia",
          market_cap=8.7e9, nta_total=None, nta_basis=None,
          nta_per_share=7.76, price=6.55, discount=-0.156,
          discount_basis="published"),
+    dict(code="CD1", exchange="ASX", name="CD Private Equity I", currency="AUD",
+         sector="Equity - Australia Strategy",
+         market_cap=6.0e7, nta_total=None, nta_basis=None,
+         nta_per_share=1.0, price=0.56, discount=-0.441,
+         discount_basis="published"),
     dict(code="PSH", exchange="LSE", name="Pershing Square", currency="GBP",
+         sector="North America",
          market_cap=6.6e9, nta_total=1.18e10, nta_basis="gross_assets",
          nta_per_share=None, price=None, discount=-0.439,
          discount_basis="mcap_over_gross_assets"),
@@ -34,24 +46,45 @@ DROPPED = [dict(code="Total", name="Total", reason="not a recognisable stock cod
                 market_cap=None, nta_per_share=None)]
 
 
-def test_the_widest_table_never_promotes_the_biased_basis():
-    """PSH's -43.9% is the widest number in the set and it is an estimate
-    inflated by gearing. A 'widest discounts' list that leads with the known
-    bias would be the report teaching its reader the wrong thing."""
+def test_deep_discounts_are_all_beyond_20pct_and_never_the_biased_basis():
+    """Two rules in one table. Only discounts wider than 20% belong in it —
+    AFI at -15.6% stays out. And PSH's -43.9%, the widest number in the set,
+    is a gross-assets estimate inflated by gearing; a deep-discount list led
+    by the known bias would be the report teaching its reader the wrong
+    thing."""
     s = summarise(ROWS)
-    widest = [r["code"] for r in s["widest"]]
-    assert "PSH" not in widest
-    assert widest[0] == "AFI"                      # -15.6%, published
-    assert s["n_exact"] == 3                       # CTY, SMT, AFI
+    deep = [r["code"] for r in s["deep"]]
+    assert deep == ["CD1", "CLDN"]                 # -44.1% then -34.6%
+    assert "PSH" not in deep and "AFI" not in deep
+    assert s["n_exact"] == 4                       # CTY, CLDN, AFI, CD1
+
+
+def test_market_averages_are_hand_computed_and_exclude_the_estimate():
+    """LSE mean over the exact rows is (+3.1 - 34.6)/2 = -15.75%; had PSH's
+    -43.9% estimate leaked in it would be -25.1% and wrong."""
+    s = summarise(ROWS)
+    m = {row[0]: row for row in s["by_market"]}
+    assert m["LSE"][1] == 2
+    assert m["LSE"][2] == pytest.approx((-0.346 + 0.031) / 2)
+    assert m["ASX"][2] == pytest.approx((-0.156 - 0.441) / 2)
+    assert m["All"][1] == 4
+    assert m["All"][2] == pytest.approx((0.031 - 0.346 - 0.156 - 0.441) / 4)
+    # median of an even-count list here = lower middle by our percentile rule
+    assert m["All"][3] == pytest.approx(-0.346)
 
 
 def test_the_email_html_carries_the_actual_numbers():
     s = summarise(ROWS)
     doc = render_html(s)
-    assert "+3.1%" in doc          # CTY premium, sign intact
-    assert "-15.6%" in doc         # AFI published discount
+    assert "-29.8%" in doc         # ASX average: (-15.6 - 44.1) / 2
+    assert "-44.1%" in doc         # CD1, the deepest admitted discount
     assert "price_over_nav_net" in doc and "mcap_over_gross_assets" in doc
-    assert "CTY" in doc and "biased wide by gearing" in doc
+    assert "biased wide by gearing" in doc
+    # The few-word category rides with each deep-discount row.
+    assert "Flexible Investment" in doc
+    assert "Equity - Australia Strategy" in doc
+    # The removed sections stay removed.
+    assert "Canaries" not in doc and "largest" not in doc.lower()
     # Gmail strips <style> blocks; everything must be inline.
     assert "<style" not in doc
 
@@ -68,10 +101,10 @@ def test_the_spreadsheet_round_trips_values_and_formats(tmp_path):
     assert wb.sheetnames == ["Summary", "Universe", "Dropped"]
     ws = wb["Universe"]
     hdr = [c.value for c in ws[1]]
-    codes = {ws.cell(row=r, column=1).value for r in range(2, 6)}
-    assert codes == {"CTY", "SMT", "AFI", "PSH"}
+    codes = {ws.cell(row=r, column=1).value for r in range(2, 7)}
+    assert codes == {"CTY", "CLDN", "AFI", "CD1", "PSH"}
     d = hdr.index("discount") + 1
-    row_cty = next(r for r in range(2, 6) if ws.cell(row=r, column=1).value == "CTY")
+    row_cty = next(r for r in range(2, 7) if ws.cell(row=r, column=1).value == "CTY")
     cell = ws.cell(row=row_cty, column=d)
     # Stored as the fraction, shown as a percent: cell and CSV always agree.
     assert cell.value == 0.031
@@ -87,7 +120,7 @@ def test_the_email_has_html_text_and_the_attachment(tmp_path):
     s = summarise(ROWS)
     msg = build_email(s, path, "sender@gmail.com",
                       "owner@gmail.com, second@work.com")
-    assert "4 funds" in msg["Subject"] and "3 exact" in msg["Subject"]
+    assert "5 funds" in msg["Subject"] and "4 exact" in msg["Subject"]
     assert msg["To"] == "owner@gmail.com, second@work.com"
     parts = {p.get_content_type() for p in msg.walk()}
     assert "text/plain" in parts and "text/html" in parts

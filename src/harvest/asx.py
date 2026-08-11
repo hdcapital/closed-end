@@ -72,7 +72,10 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             exchange=EXCHANGE,
             name=rec.name,
             vehicle_type=rec.structure,          # LIC | LIT
-            sector=asx_monthly.normalise_sector(rec.mandate, rec.name or ""),
+            # The report's own banner ("Equity - Australia") over the inferred
+            # token ('equity'): the publisher's words, and more specific.
+            sector=rec.section or asx_monthly.normalise_sector(
+                rec.mandate, rec.name or ""),
             currency=CURRENCY,
             market_cap=rec.market_cap,           # already scaled from $m
             nta_per_share=nta,

@@ -103,6 +103,19 @@ def build(rows, dropped, summary, path):
             if c in (3, 4, 5):
                 cell.number_format = "+0.0%;-0.0%"
 
+    if summary.get("by_market"):
+        r += 2
+        ws.cell(row=r, column=1, value="Average discount by market").font = \
+            Font(bold=True, size=11)
+        r += 1
+        _header(ws, ["market", "n", "average", "median"], row=r)
+        for ex, n, avg, med in summary["by_market"]:
+            r += 1
+            for c, v in enumerate((ex, n, avg, med), start=1):
+                cell = ws.cell(row=r, column=c, value=v)
+                if c in (3, 4):
+                    cell.number_format = "+0.0%;-0.0%"
+
     r += 2
     ws.cell(row=r, column=1, value="How to read the bases").font = Font(bold=True, size=11)
     for note in summary["notes"]:
