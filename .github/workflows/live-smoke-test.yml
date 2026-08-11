@@ -103,6 +103,13 @@ jobs:
         continue-on-error: true
         run: python -m src.run --phase report
 
+      # The UK leg is the largest remaining gap; this reports which candidate
+      # instrument-list file actually carries a ticker+ISIN header, so the fix
+      # is one config line rather than another round of guessing.
+      - name: "Probe — locate the LSE instrument list"
+        continue-on-error: true
+        run: python -m src.probe_uk
+
       - name: Diagnostics
         if: always()
         run: python -m src.diagnose
