@@ -147,24 +147,54 @@ def test_total_assets_is_never_reported_as_market_cap():
     the gap between them is the discount. Collapsing one into the other would
     make a trust on a 30% discount look fairly priced."""
     r = Record(code="HICL", exchange="LSE", name="HICL Infrastructure",
-               market_cap=None, total_assets=3.0e9, nta_per_share=None)
+               market_cap=None, nta_total=3.0e9, nta_per_share=None)
     res = clean([r])
-    assert len(res.records) == 1                 # kept: total assets is data
+    assert len(res.records) == 1                 # kept: the NTA total is data
     assert res.records[0].market_cap is None     # but not pretended to be cap
-    assert res.records[0].total_assets == 3.0e9
+    assert res.records[0].nta_total == 3.0e9
 
 
-def test_a_row_with_only_total_assets_still_survives():
+def test_a_row_with_only_an_nta_total_still_survives():
     res = clean([Record(code="XYZ", exchange="LSE", name="Some Trust",
-                        total_assets=5e8)])
+                        nta_total=5e8)])
     assert [r.code for r in res.records] == ["XYZ"]
+
+
+def test_discount_is_derived_from_aggregates_when_no_per_share_nav_exists():
+    """The share count cancels, so aggregate figures give the same discount as
+    per-share ones:  mcap / nta_total - 1  ==  price / nav - 1.
+    A trust at GBP900m market cap against GBP1.0bn of assets is on -10%."""
+    res = clean([Record(code="SMT", exchange="LSE", name="Scottish Mortgage",
+                        market_cap=9.0e8, nta_total=1.0e9)])
+    r = res.records[0]
+    assert r.discount == pytest.approx(-0.10)
+    assert r.discount_basis == "mcap_over_nta_total"
+
+
+def test_a_published_discount_is_never_overwritten_by_a_derived_one():
+    """The ASX publishes its own premium/discount. Where a source states it, we
+    keep the source's figure and label it, rather than recomputing."""
+    res = clean([Record(code="AFI", exchange="ASX", name="AFIC",
+                        market_cap=8.7e9, nta_total=1.0e10,
+                        discount=-0.156, discount_basis="published")])
+    r = res.records[0]
+    assert r.discount == pytest.approx(-0.156)
+    assert r.discount_basis == "published"
+
+
+def test_a_premium_survives_the_derivation():
+    """3i trades above NAV. A derivation that only ever produces discounts is
+    broken, so the positive case is pinned too."""
+    res = clean([Record(code="III", exchange="LSE", name="3i Group",
+                        market_cap=2.8e10, nta_total=2.0e10)])
+    assert res.records[0].discount == pytest.approx(0.40)
 
 
 def test_isin_is_carried_through_and_prefers_the_richer_duplicate():
     thin = Record(code="SMT", exchange="LSE", name="Scottish Mortgage",
                   market_cap=1.4e10)
     rich = Record(code="SMT", exchange="LSE", name="Scottish Mortgage",
-                  market_cap=1.4e10, isin="GB00BLDYK618", total_assets=1.5e10)
+                  market_cap=1.4e10, isin="GB00BLDYK618", nta_total=1.5e10)
     res = clean([thin, rich])
     assert len(res.records) == 1
     assert res.records[0].isin == "GB00BLDYK618"

@@ -42,6 +42,44 @@ def _fmt_money(v, cur):
     return f"{sym}{v:,.0f}"
 
 
+# Trusts whose discount is well known and stable enough to act as a canary.
+# 3i has traded at a large PREMIUM to NAV for years; if it comes out at a deep
+# discount, the asset figure is not the net one and the whole UK column is
+# biased. City of London sits near par. Scottish Mortgage runs a modest
+# discount.
+CANARIES = {"III": "historically a large premium",
+            "CTY": "historically near par",
+            "SMT": "historically a modest discount",
+            "FCIT": "historically a modest discount"}
+
+
+def _discount_sanity(records) -> None:
+    """Check the derived UK discounts against known behaviour.
+
+    Deriving a discount from mcap / total assets is exact *if* the asset figure
+    is net. If the publisher means gross assets — before gearing — then every
+    geared fund looks cheaper than it is, and infrastructure, property and
+    private equity look cheapest of all precisely because they gear most. That
+    is a systematic bias pointed straight at the sectors a discount screen
+    cares about, so it gets checked rather than assumed.
+    """
+    from ..util import median
+    derived = [r for r in records if r.discount_basis == "mcap_over_nta_total"]
+    if not derived:
+        return
+    print("\n  derived discounts (mcap / NTA total - 1):")
+    med = median([r.discount for r in derived])
+    print(f"    n={len(derived)}  median={med * 100:.1f}%"
+          f"  premium-rated={sum(1 for r in derived if r.discount > 0)}")
+    for code, expected in CANARIES.items():
+        hit = next((r for r in derived if r.code == code), None)
+        if hit:
+            print(f"    {code:6}{hit.discount * 100:>8.1f}%   expected: {expected}")
+    if med is not None and med < -0.20:
+        print("    !! median below -20%: the asset figure is probably GROSS of "
+              "gearing, not net. Geared sectors will look systematically cheap.")
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Harvest the closed-end universe")
     ap.add_argument("--offline", action="store_true")
@@ -91,12 +129,14 @@ def main(argv=None) -> int:
         b["cap"] += r.market_cap is not None
         b["nta"] += r.nta_per_share is not None
         b["isin"] = b.get("isin", 0) + (r.isin is not None)
-        b["ta"] = b.get("ta", 0) + (r.total_assets is not None)
-    print(f"\n  {'exchange':10}{'funds':>7}{'mkt cap':>10}{'NTA':>7}"
-          f"{'tot assets':>12}{'ISIN':>7}")
+        b["ta"] = b.get("ta", 0) + (r.nta_total is not None)
+        b["disc"] = b.get("disc", 0) + (r.discount is not None)
+    print(f"\n  {'exchange':10}{'funds':>7}{'mkt cap':>10}{'NTA/sh':>8}"
+          f"{'NTA total':>11}{'discount':>10}{'ISIN':>7}")
     for ex, b in sorted(by_ex.items()):
-        print(f"  {ex:10}{b['n']:>7}{b['cap']:>10}{b['nta']:>7}"
-              f"{b['ta']:>12}{b['isin']:>7}")
+        print(f"  {ex:10}{b['n']:>7}{b['cap']:>10}{b['nta']:>8}"
+              f"{b['ta']:>11}{b['disc']:>10}{b['isin']:>7}")
+    _discount_sanity(result.records)
 
     if result.dropped:
         reasons = {}
@@ -110,16 +150,17 @@ def main(argv=None) -> int:
     print("\n" + "=" * 78)
     print("SAMPLE — 25 largest by market cap")
     print("=" * 78)
-    print(f"  {'code':7}{'exch':6}{'name':34}{'mkt cap':>11}{'tot assets':>12}"
-          f"{'NTA':>10}  {'sector':18}")
+    print(f"  {'code':7}{'exch':6}{'name':32}{'mkt cap':>11}{'NTA total':>12}"
+          f"{'NTA/sh':>9}{'disc':>8}  {'basis':22}")
     ranked = sorted(result.records,
                     key=lambda r: -(r.market_cap or 0))[:25]
     for r in ranked:
         nta = f"{r.nta_per_share:,.4f}" if r.nta_per_share is not None else "—"
-        print(f"  {r.code:7}{r.exchange:6}{(r.name or '')[:32]:34}"
+        disc = f"{r.discount * 100:.1f}%" if r.discount is not None else "—"
+        print(f"  {r.code:7}{r.exchange:6}{(r.name or '')[:30]:32}"
               f"{_fmt_money(r.market_cap, r.currency):>11}"
-              f"{_fmt_money(r.total_assets, r.currency):>12}{nta:>10}  "
-              f"{(r.sector or '')[:16]:18}")
+              f"{_fmt_money(r.nta_total, r.currency):>12}{nta:>9}{disc:>8}  "
+              f"{(r.discount_basis or '—'):22}")
 
     out = _write(args.out, [r.as_row() for r in result.records], COLUMNS)
     dropped = _write(DROPPED_OUT, result.dropped,

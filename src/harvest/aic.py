@@ -43,8 +43,10 @@ COLUMN_SPEC = {
     "market_cap":  {"match": ["market cap", "market capitalisation",
                               "market capitalization", "mkt cap"],
                     "not": ["change", "%"]},
-    "total_assets": {"match": ["total assets", "total net assets", "net assets"],
-                     "not": ["change", "%", "per share"]},
+    # The AIC's total-assets column is the fund's asset figure; paired with
+    # market cap it gives the discount directly. See note on gearing in run.py.
+    "nta_total":   {"match": ["total assets", "total net assets", "net assets"],
+                    "not": ["change", "%", "per share"]},
     "nav":         {"match": ["nav per share", "net asset value per share",
                               "nav (p)", "nav pence", "nav"],
                     "not": ["change", "%", "total", "return", "discount"]},
@@ -112,7 +114,7 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
         cmap = tabular.ColumnMap(rows[idx], COLUMN_SPEC)
         if not cmap.has("name"):
             continue
-        score = sum(cmap.has(f) for f in ("code", "market_cap", "nav", "total_assets"))
+        score = sum(cmap.has(f) for f in ("code", "market_cap", "nav", "nta_total"))
         if best is None or score > best[0]:
             best = (score, name, rows, idx, cmap)
 
@@ -134,8 +136,8 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             "cannot be joined to a price feed; a TIDM source is needed")
 
     cap_mult = unit_multiplier(cmap.header_for("market_cap"))
-    ta_mult = unit_multiplier(cmap.header_for("total_assets"))
-    if not cmap.has("nav"):
+    ta_mult = unit_multiplier(cmap.header_for("nta_total"))
+    if not cmap.has("nav") and not cmap.has("nta_total"):
         # Stated plainly because it bounds what this source can deliver: the
         # industry overview carries assets and market cap, not NAV per share.
         # The AIC's Monthly Information Release is the file that has NAVs, but
@@ -154,7 +156,7 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
         if not name:
             continue
         cap = to_float(cmap.get(row, "market_cap"))
-        ta = to_float(cmap.get(row, "total_assets"))
+        ta = to_float(cmap.get(row, "nta_total"))
         nav, nav_unit = nta_from(cmap.get(row, "nav"), cmap.header_for("nav"), CURRENCY)
         isin = cmap.get(row, "isin")
         isin = str(isin).strip().upper() if isin else None
@@ -169,7 +171,7 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             currency=CURRENCY,
             isin=isin if (isin and len(isin) == 12) else None,
             market_cap=cap * cap_mult if cap is not None else None,
-            total_assets=ta * ta_mult if ta is not None else None,
+            nta_total=ta * ta_mult if ta is not None else None,
             nta_per_share=nav,
             nta_unit=nav_unit,
             price=to_float(cmap.get(row, "price")),

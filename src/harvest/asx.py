@@ -83,6 +83,7 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             nta_unit="declared_major" if nta is not None else None,
             price=rec.price,
             discount=rec.premium_discount,
+            discount_basis="published" if rec.premium_discount is not None else None,
             nta_date=rec.nta_date,
             as_of=rec.nta_date,
             source=SOURCE,

@@ -26,8 +26,9 @@ from typing import List, Optional
 # The columns of the output table, in order.
 COLUMNS = [
     "code", "isin", "exchange", "name", "vehicle_type", "sector",
-    "currency", "market_cap", "total_assets", "nta_per_share", "nta_unit",
-    "price", "discount", "nta_date", "as_of", "source", "source_url",
+    "currency", "market_cap", "nta_total", "nta_per_share", "nta_unit",
+    "price", "discount", "discount_basis", "nta_date", "as_of",
+    "source", "source_url",
 ]
 
 # Per-share values outside this band are not per-share values.
@@ -53,14 +54,15 @@ class Record:
     sector: Optional[str] = None
     currency: Optional[str] = None
     market_cap: Optional[float] = None      # currency units, not millions
-    # Total assets is NOT a substitute for market cap: one is what the market
-    # pays, the other is what the fund owns, and the gap between them is the
-    # discount this whole exercise is about. Kept in its own column.
-    total_assets: Optional[float] = None
+    # Aggregate net tangible assets: what the fund owns, in currency units.
+    # Kept apart from market_cap because the gap between the two IS the
+    # discount — but the two together are all a discount needs.
+    nta_total: Optional[float] = None
     nta_per_share: Optional[float] = None   # major unit (dollars / pounds)
     nta_unit: Optional[str] = None          # declared_major | declared_pence | assumed_major
     price: Optional[float] = None
     discount: Optional[float] = None        # fraction, negative = discount
+    discount_basis: Optional[str] = None    # published | price_over_nta | mcap_over_nta_total
     nta_date: Optional[str] = None
     as_of: Optional[str] = None
     source: Optional[str] = None
@@ -190,7 +192,18 @@ def clean(raw_records: List[Record]) -> CleanResult:
             r.nta_per_share, r.nta_unit = None, None
         if r.market_cap is not None and r.market_cap <= 0:
             r.market_cap = None
-        if r.market_cap is None and r.nta_per_share is None and r.total_assets is None:
+        # A discount needs a price and a NAV *at the same scale*. Per-share is
+        # the familiar way; aggregate works identically, because market cap and
+        # total NTA both carry the same share count and it cancels:
+        #   mcap / nta_total - 1 == (price x shares) / (nav x shares) - 1
+        # So a source with no per-share NAV can still yield a real discount.
+        if r.discount is None and r.market_cap and r.nta_total:
+            r.discount = r.market_cap / r.nta_total - 1.0
+            r.discount_basis = "mcap_over_nta_total"
+        elif r.discount is not None and r.discount_basis is None:
+            r.discount_basis = "published"
+
+        if r.market_cap is None and r.nta_per_share is None and r.nta_total is None:
             out.drop(code, r.name or "", "no market cap and no NTA")
             continue
 
@@ -201,7 +214,7 @@ def clean(raw_records: List[Record]) -> CleanResult:
             prev = seen[key]
             richer = max((prev, r), key=lambda x: sum(
                 v is not None for v in (x.market_cap, x.nta_per_share,
-                                        x.price, x.isin, x.total_assets)))
+                                        x.price, x.isin, x.nta_total)))
             seen[key] = richer
             continue
         seen[key] = r
