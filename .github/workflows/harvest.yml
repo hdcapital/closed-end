@@ -35,12 +35,22 @@ jobs:
       #   GMAIL_APP_PASSWORD  an app password (myaccount.google.com/apppasswords)
       #   MAIL_TO             optional; defaults to GMAIL_USERNAME
       - name: Email the report
-        if: ${{ secrets.GMAIL_APP_PASSWORD != '' }}
         env:
           GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
-        run: python -m src.harvest.email_report
+        # The guard lives in the shell because the secrets context is not
+        # available in a step-level `if` — referencing it there is a workflow
+        # parse error and the whole run dies with zero jobs.
+        run: |
+          if [ -z "$GMAIL_APP_PASSWORD" ]; then
+            echo "No GMAIL_APP_PASSWORD secret — not sending. The email body and"
+            echo "spreadsheet are in the run artifact. To enable sending, add"
+            echo "repository secrets GMAIL_USERNAME + GMAIL_APP_PASSWORD"
+            echo "(myaccount.google.com/apppasswords), optional MAIL_TO."
+            exit 0
+          fi
+          python -m src.harvest.email_report
       # Last step on purpose: these few rows answer whether the derived UK
       # discount is trustworthy, and the tail of the log is where that is
       # readable. 3i has traded at a premium for years and City of London near
