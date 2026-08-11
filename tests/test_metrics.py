@@ -249,3 +249,36 @@ def test_peer_group_falls_back_to_global_when_local_is_thin():
     assert label == "equity@global"
     assert approx(med, -0.15)      # median of (-0.20, -0.10)
     assert n == 2
+
+
+# ---------------------------------------------------------------------------
+# Scale breaks in the source panel
+# ---------------------------------------------------------------------------
+
+def test_cents_dollars_switch_is_dropped_not_averaged_in():
+    """Straight from the live ASX panel: TOP published 0.91, then 92.10, then
+    1.01 in consecutive months. Left in, that pair implies a five-figure annual
+    return; the middle point must be dropped, not rescaled."""
+    series = [{"date": f"2025-{m:02d}-28", "nta": v} for m, v in
+              enumerate([0.90, 0.91, 92.10, 1.01, 1.02, 1.00], start=1)]
+    kept, dropped = returns.drop_scale_breaks(series)
+    assert [round(p["nta"], 2) for p in kept] == [0.90, 0.91, 1.01, 1.02, 1.00]
+    assert len(dropped) == 1 and dropped[0]["nta"] == 92.10
+
+
+def test_a_fund_that_genuinely_compounds_is_not_truncated():
+    """The reason the test is local rather than global: a fund whose NAV really
+    does grow tenfold across the panel must keep every observation."""
+    series = [{"date": f"20{y:02d}-06-30", "nta": 1.0 * (1.35 ** i)}
+              for i, y in enumerate(range(18, 27))]
+    kept, dropped = returns.drop_scale_breaks(series)
+    assert dropped == []
+    assert len(kept) == len(series)
+
+
+def test_scale_break_is_excluded_from_the_stored_series(conn):
+    db.insert_nta(conn, [_nta("ASX:TST", f"2025-{m:02d}-28", v) for m, v in
+                         enumerate([1.00, 1.01, 101.0, 1.02, 1.03, 1.04], start=1)])
+    conn.commit()
+    _, series = returns.choose_series(conn, "ASX:TST")
+    assert all(p["nta"] < 2 for p in series)

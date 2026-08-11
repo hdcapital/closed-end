@@ -65,10 +65,57 @@ def choose_series(conn, fund_id: str) -> Tuple[Optional[str], List[dict]]:
         )
     for t in PRIMARY_NTA_PREFERENCE:
         if t in by_type and len(by_type[t]) >= 2:
-            return t, by_type[t]
+            return t, drop_scale_breaks(by_type[t])[0]
     # Nothing preferred has two points: fall back to whichever has the most.
     best = max(by_type.items(), key=lambda kv: len(kv[1]))
-    return best[0], best[1]
+    return best[0], drop_scale_breaks(best[1])[0]
+
+
+# A point this far from its local neighbourhood is a unit change, not a return.
+SCALE_BREAK_FACTOR = 20.0
+_NEIGHBOURHOOD = 5
+
+
+def drop_scale_breaks(series: List[dict]):
+    """Remove observations published on a different scale from their neighbours.
+
+    The ASX monthly report is not internally consistent: for a handful of small
+    funds some editions publish NTA in cents and others in dollars, so the panel
+    contains steps like 0.91 -> 92.10 -> 1.01. Left alone, one such pair implies
+    a 10,000% annual return and marches the fund to the top of the screen.
+
+    The test is *local*, not global: comparing against a whole-history median
+    would reject the genuine growth of a fund that has compounded 10x over the
+    panel. A point is dropped only when it sits more than 20x away from the
+    median of its immediate neighbours — a move no monthly NAV makes and a
+    cents/dollars switch makes exactly.
+
+    Dropped, not repaired. Rescaling by 100 would usually be right, and "usually
+    right" is precisely the kind of silent correction this project is supposed
+    to avoid; a gap in the series is honest, a fabricated level is not.
+
+    Returns (kept, dropped).
+    """
+    if len(series) < 3:
+        return list(series), []
+    from ..util import median as _median
+
+    kept, dropped = [], []
+    for i, point in enumerate(series):
+        lo = max(0, i - _NEIGHBOURHOOD)
+        hi = min(len(series), i + _NEIGHBOURHOOD + 1)
+        neighbours = [p["nta"] for j, p in enumerate(series[lo:hi], start=lo)
+                      if j != i and p["nta"] and p["nta"] > 0]
+        local = _median(neighbours)
+        if not local or local <= 0:
+            kept.append(point)
+            continue
+        ratio = point["nta"] / local
+        if ratio > SCALE_BREAK_FACTOR or ratio < 1.0 / SCALE_BREAK_FACTOR:
+            dropped.append({**point, "local_median": local, "ratio": ratio})
+        else:
+            kept.append(point)
+    return kept, dropped
 
 
 def dividends_by_date(conn, fund_id: str) -> List[dict]:

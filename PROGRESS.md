@@ -92,6 +92,23 @@ Yield** and **1/3/5-Year Total Return (ann.)**. Consequences:
 4. `archive_months` is trimmed by the smoke workflow for run time; a full
    refresh should raise it back to the configured 130.
 
+### Third run: the column fix confirmed, and a residual source defect
+
+Re-running with the corrected mapping took the NTA sanity check from **607
+suspicious steps to 30** — the mis-mapped column is gone. The 30 that remain
+are a genuine inconsistency in the source rather than a parsing bug: for a
+handful of small funds the ASX report publishes NTA in cents in some editions
+and dollars in others, giving panels like TOP `0.91 -> 92.10 -> 1.01` and BEL
+`0.0100 -> 0.9400`.
+
+Handled in `metrics/returns.drop_scale_breaks`: an observation more than 20x
+from the median of its immediate neighbours is dropped from the series. The
+test is deliberately *local* — a whole-history median would reject the real
+growth of a fund that compounded 10x across the panel. And the point is
+**dropped, not rescaled**: multiplying by 100 would usually be right, and
+"usually right" is exactly the silent correction this project exists to avoid.
+A gap in the series is honest; a fabricated level is not.
+
 ## 2026-08-11 — Phases 0–5 built; no live data validated
 
 ### The headline problem: this session had no egress to any market data source
