@@ -172,6 +172,8 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             isin=isin if (isin and len(isin) == 12) else None,
             market_cap=cap * cap_mult if cap is not None else None,
             nta_total=ta * ta_mult if ta is not None else None,
+            # "Total assets (£m)" is before borrowings. Say so on the row.
+            nta_basis="gross_assets" if ta is not None else None,
             nta_per_share=nav,
             nta_unit=nav_unit,
             price=to_float(cmap.get(row, "price")),

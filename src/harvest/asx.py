@@ -76,6 +76,7 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             currency=CURRENCY,
             market_cap=rec.market_cap,           # already scaled from $m
             nta_per_share=nta,
+            nta_basis="published_nta" if nta is not None else None,
             # The report quotes NTA in dollars per share and says so in the
             # column it comes from ("NTA Price"), alongside a Last Close in the
             # same unit — the two agreeing with the published discount is what

@@ -170,6 +170,16 @@ def main(argv=None) -> int:
     for ex, b in sorted(by_ex.items()):
         print(f"  {ex:10}{b['n']:>7}{b['cap']:>10}{b['nta']:>8}"
               f"{b['ta']:>11}{b['disc']:>10}{b['isin']:>7}")
+    basis = {}
+    for r in result.records:
+        if r.nta_total is not None:
+            basis[r.nta_basis or "unstated"] = basis.get(r.nta_basis or "unstated", 0) + 1
+    if basis:
+        print("\n  what the NTA total actually is:")
+        for b, n in sorted(basis.items(), key=lambda kv: -kv[1]):
+            note = " — before borrowings, so not an NTA" if b == "gross_assets" else ""
+            print(f"    {n:>5}  {b}{note}")
+
     _discount_sanity(result.records)
 
     if result.dropped:

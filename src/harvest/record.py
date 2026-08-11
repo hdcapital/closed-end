@@ -26,8 +26,8 @@ from typing import List, Optional
 # The columns of the output table, in order.
 COLUMNS = [
     "code", "isin", "exchange", "name", "vehicle_type", "sector",
-    "currency", "market_cap", "nta_total", "nta_per_share", "nta_unit",
-    "price", "discount", "discount_basis", "nta_date", "as_of",
+    "currency", "market_cap", "nta_total", "nta_basis", "nta_per_share",
+    "nta_unit", "price", "discount", "discount_basis", "nta_date", "as_of",
     "source", "source_url",
 ]
 
@@ -58,6 +58,15 @@ class Record:
     # Kept apart from market_cap because the gap between the two IS the
     # discount — but the two together are all a discount needs.
     nta_total: Optional[float] = None
+    # WHICH asset figure nta_total actually is. Two publishers use the word
+    # "assets" for two different numbers and the gap between them is the debt:
+    #   net_shareholders_funds — AIC MIR. What the shareholders own. The NTA.
+    #   gross_assets           — AIC industry overview. Before borrowings, so
+    #                            larger, and larger by more the more a fund
+    #                            gears. Not an NTA, and not comparable to one.
+    #   published_nta          — the ASX states its own NTA per share.
+    # A column that mixes the first two is not the uniform NTA it looks like.
+    nta_basis: Optional[str] = None
     nta_per_share: Optional[float] = None   # major unit (dollars / pounds)
     nta_unit: Optional[str] = None          # declared_major | declared_pence | assumed_major
     price: Optional[float] = None
@@ -207,7 +216,7 @@ _BASIS_RANK = {"price_over_nav_net": 3, "published": 2,
 
 # Fields that describe one valuation and are only true together. A net NAV and
 # a gross NAV must never end up in the same row, so these move as a block.
-_VALUATION = ("nta_total", "nta_per_share", "nta_unit", "price",
+_VALUATION = ("nta_total", "nta_basis", "nta_per_share", "nta_unit", "price",
               "discount", "discount_basis", "nta_date")
 
 
@@ -287,12 +296,18 @@ def clean(raw_records: List[Record]) -> CleanResult:
         elif r.discount is not None and r.discount_basis is None:
             r.discount_basis = "published"
 
-        if r.market_cap is None and r.nta_per_share is None and r.nta_total is None:
-            out.drop(code, r.name or "", "no market cap and no NTA")
-            continue
-
         r.code = code
         key = f"{r.exchange}:{code}"
+        if r.market_cap is None and r.nta_per_share is None and r.nta_total is None:
+            # An empty row is only a loss if nobody else has the vehicle. The
+            # MIR lists 142 members that report no figures at all; almost all
+            # of them are in the industry overview, so saying "no market cap
+            # and no NTA" 137 times overstates what was actually lost.
+            out.drop(code, r.name or "",
+                     "no figures; already covered by another source"
+                     if key in seen else "no market cap and no NTA")
+            continue
+
         if key in seen:
             seen[key] = merge(seen[key], r)
             out.merged += 1

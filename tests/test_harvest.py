@@ -370,6 +370,33 @@ def test_a_merge_never_mixes_a_net_nav_with_a_gross_one():
     assert r.discount_basis == "price_over_nav_net"
 
 
+def test_the_asset_figure_says_which_kind_of_asset_figure_it_is():
+    """Two publishers use "assets" for two different numbers — one before
+    borrowings, one after. An NTA column that mixes them is not uniform, so
+    every row states which it holds."""
+    by_name, _ = _mir_harvest()
+    assert by_name["Pacific Assets Trust"].nta_basis == "net_shareholders_funds"
+    overview = Record(code="HICL", exchange="LSE", market_cap=2.0e9,
+                      nta_total=3.0e9, nta_basis="gross_assets", source="aic")
+    mir = Record(code="HICL", exchange="LSE", nta_total=2.2e9,
+                 nta_basis="net_shareholders_funds", nta_per_share=1.10,
+                 price=1.00, discount=-0.0909,
+                 discount_basis="price_over_nav_net", source="aic-mir")
+    # The label travels with the figure it describes, or it is worse than none.
+    assert merge(overview, mir).nta_basis == "net_shareholders_funds"
+
+
+def test_a_row_nobody_else_has_is_still_reported_as_a_real_loss():
+    """The empty MIR rows are duplicates of the overview and cost nothing; a
+    genuinely figure-less vehicle is a different matter and must not hide in
+    the same bucket."""
+    covered = [Record(code="SMT", exchange="LSE", market_cap=1e10),
+               Record(code="SMT", exchange="LSE")]
+    alone = [Record(code="ZZZ", exchange="LSE")]
+    assert clean(covered).dropped[0]["reason"].startswith("no figures; already")
+    assert clean(alone).dropped[0]["reason"] == "no market cap and no NTA"
+
+
 def test_a_source_with_no_discount_at_all_still_lends_its_figures():
     thin = Record(code="AAA", exchange="LSE", market_cap=1e8, source="aic")
     other = Record(code="AAA", exchange="LSE", nta_per_share=2.5,

@@ -188,6 +188,7 @@ def harvest(fetcher, url: str = None) -> Tuple[List[Record], dict]:
             sector=(cell(row, F_SECTOR) or "").strip() or None,
             currency="GBP" if cur.startswith("GB") else cur,
             nta_total=net_assets,
+            nta_basis="net_shareholders_funds" if net_assets else None,
             nta_per_share=nav_ps,
             nta_unit="declared_major" if nav_ps is not None else None,
             price=price / divisor if price else None,
