@@ -1,0 +1,43 @@
+name: Harvest universe
+
+# Collects the closed-end universe from the ASX monthly report and the AIC
+# industry overview into one clean table of codes, market caps and NTAs.
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/closed-end-screening-engine-bw13wg]
+
+concurrency: harvest
+permissions:
+  contents: read
+
+jobs:
+  harvest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests/test_harvest.py -q
+      - name: Harvest
+        run: python -m src.harvest.run
+      - name: Show the table
+        if: always()
+        run: |
+          echo "=== data/universe.csv (first 40 rows) ==="
+          head -40 data/universe.csv || true
+          echo
+          echo "=== row count ==="
+          wc -l data/universe.csv || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: universe-${{ github.run_id }}
+          path: |
+            data/universe.csv
+            data/universe_dropped.csv
+          if-no-files-found: warn
