@@ -6,7 +6,7 @@ name: Harvest universe
 on:
   workflow_dispatch:
   push:
-    branches: [claude/closed-end-screening-engine-bw13wg]
+    branches: [main, claude/closed-end-screening-engine-bw13wg]
 
 concurrency: harvest
 permissions:
@@ -38,8 +38,9 @@ jobs:
         env:
           GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          # Comma-separated recipients. A MAIL_TO secret overrides the default.
-          MAIL_TO: ${{ secrets.MAIL_TO || 'danielconorsims@gmail.com, daniel@whileyclose.com' }}
+          # Sent FROM the Gmail account (that is where the app password lives),
+          # TO the work address. A MAIL_TO secret overrides the default.
+          MAIL_TO: ${{ secrets.MAIL_TO || 'daniel@whileyclose.com' }}
         # The guard lives in the shell because the secrets context is not
         # available in a step-level `if` — referencing it there is a workflow
         # parse error and the whole run dies with zero jobs.
