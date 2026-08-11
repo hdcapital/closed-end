@@ -171,7 +171,7 @@ def write_html(results: Dict[str, object], path: str, cfg, run_meta: dict = None
     p: List[str] = []
     p.append(f"<!doctype html><meta charset='utf-8'><title>Closed-end screen "
              f"{today_utc()}</title><style>{STYLE}</style>")
-    p.append(f"<h1>Closed-end fund &amp; LIC screen</h1>")
+    p.append("<h1>Closed-end fund &amp; LIC screen</h1>")
     p.append(f"<div class='sub'>Generated {utcnow_iso()} &middot; "
              f"{len(rows)} live funds &middot; {len(rankable)} rankable &middot; "
              f"{len(excluded)} excluded for insufficient data</div>")

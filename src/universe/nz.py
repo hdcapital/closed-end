@@ -16,7 +16,7 @@ were equally solid.
 import re
 from typing import List
 
-from .. import db, fetch
+from .. import db
 from ..util import utcnow_iso
 from .common import compile_exclusions, should_exclude
 

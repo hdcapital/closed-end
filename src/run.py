@@ -13,7 +13,6 @@ one exchange at a time against the cache.
 
 import argparse
 import datetime
-import json
 import os
 import sys
 

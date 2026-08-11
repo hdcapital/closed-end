@@ -17,7 +17,7 @@ guard rails, because the failure mode is silent and expensive:
 """
 
 import datetime
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 from .. import db, fetch
 from ..util import to_float, today_utc, utcnow_iso

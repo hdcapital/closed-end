@@ -198,7 +198,15 @@ def score_register(cfg, *, exchange, holders, insider_pct=None,
     pcts = [h["pct"] for h in holders if h.get("pct") is not None]
     if pcts:
         top20 = sum(sorted(pcts, reverse=True)[:20])
-        largest = max(pcts)
+        # The blocking-stake test ignores nominee and custodian lines. On an
+        # ASX top-20 the largest entries are usually custodians holding for
+        # many unrelated beneficiaries; "HSBC Custody Nominees 18%" cannot
+        # block anything, and reading it as a control block would wrongly rule
+        # out a perfectly winnable register. They still count toward top-20,
+        # which is a measure of how much of the register is disclosed at all.
+        votable = [h["pct"] for h in holders
+                   if h.get("pct") is not None and h.get("holder_type") != "nominee"]
+        largest = max(votable) if votable else 0.0
         conf = cfg.get("activist.register.concentration")
         lo, hi = float(conf["top20_ideal_lo"]), float(conf["top20_ideal_hi"])
         if lo <= top20 <= hi:
@@ -216,6 +224,7 @@ def score_register(cfg, *, exchange, holders, insider_pct=None,
         parts["concentration"] = clamp(conc, 0.0, 100.0)
         p.evidence["top20_pct"] = top20
         p.evidence["largest_holder_pct"] = largest
+        p.evidence["largest_including_nominees"] = max(pcts)
         p.evidence["n_holders_known"] = len(pcts)
     else:
         p.reasons.append("no holder percentages — concentration unknown")

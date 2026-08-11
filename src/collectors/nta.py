@@ -16,12 +16,12 @@ Nothing here fabricates. A fund with no reachable NTA gets a NULL observation
 carrying the reason, and shows up in the report's data-quality appendix.
 """
 
-from typing import Dict, List, Optional
+from typing import List, Optional
 
-from .. import db, fetch
-from ..util import parse_date, today_utc, utcnow_iso
+from .. import db
+from ..util import today_utc, utcnow_iso
 from . import asx_monthly, nta_text
-from .lake import HOLDER_TITLE_RE, NTA_TITLE_RE, LakeReader, date_range
+from .lake import NTA_TITLE_RE, LakeReader, date_range
 
 
 def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:

@@ -121,9 +121,14 @@ Actions. Nothing in the code needs to change either way.
   historical filing would count one stake once per amendment and manufacture a
   concentrated register, so only the latest filing per holder counts as a
   position.
-- **Nominee lines dominate ASX top-20 tables.** Reading "HSBC Custody Nominees
-  18%" as a blocking stake would wrongly rule out perfectly winnable
-  registers, so custodians are classified apart from insiders.
+- **Nominee lines dominate ASX top-20 tables.** A custodian holds for many
+  unrelated beneficiaries and cannot block anything, so reading "HSBC Custody
+  Nominees 18%" as a control block would wrongly rule out a perfectly winnable
+  register. Custodians are classified apart from insiders *and* excluded from
+  the blocking-stake test, while still counting toward top-20 (which measures
+  how much of the register is disclosed at all). Caught by rendering the
+  report on realistic data and noticing the score disagreed with its own
+  documentation.
 
 ### Open questions for the owner
 

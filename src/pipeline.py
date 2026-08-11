@@ -7,7 +7,6 @@ have to exist before d_star, which the forward return and the activist prize
 pillar both consume. So this runs in two passes rather than one loop.
 """
 
-import json
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 

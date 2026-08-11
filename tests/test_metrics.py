@@ -11,7 +11,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src import config, db
 from src.metrics import discounts, returns
-from src.util import annualise, mean, stdev, to_float
+from src.util import annualise, stdev, to_float
 
 
 def approx(x, y, tol=1e-9):

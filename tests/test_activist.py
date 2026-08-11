@@ -132,6 +132,26 @@ def test_blocking_stake_penalises_concentration(cfg):
     assert any("blocking threshold" in r for r in p.reasons)
 
 
+def test_custodian_line_is_not_a_blocking_stake(cfg):
+    """A nominee holds for many unrelated beneficiaries and cannot block
+    anything. Counting one as a control block would wrongly rule out a
+    perfectly winnable register — the commonest way to misread an ASX top-20.
+
+      top20 = 0.22 + 0.10 + 0.08 = 0.40, inside the ideal band -> 100
+      largest *votable* holder is 0.10, below the 20% threshold -> no penalty
+    """
+    holders = [{"holder_name": "HSBC Custody Nominees", "holder_type": "nominee", "pct": 0.22},
+               {"holder_name": "Inst A", "holder_type": "institution", "pct": 0.10},
+               {"holder_name": "Inst B", "holder_type": "institution", "pct": 0.08}]
+    p = activist.score_register(cfg, exchange="ASX", holders=holders,
+                                insider_pct=None, institutional_filing_count=None)
+    assert approx(p.components["concentration"], 100.0)
+    assert approx(p.evidence["largest_holder_pct"], 0.10)
+    # The custodian is still visible in the evidence, just not treated as a block.
+    assert approx(p.evidence["largest_including_nominees"], 0.22)
+    assert not any("blocking threshold" in r for r in p.reasons)
+
+
 def test_insider_ownership_bands(cfg):
     def insider(pct):
         return activist.score_register(cfg, exchange="ASX", holders=[],

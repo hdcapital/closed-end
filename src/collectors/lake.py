@@ -21,7 +21,7 @@ import json
 import os
 import re
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 LAKE_PREFIX = os.environ.get("S3_LAKE_PREFIX", "market-data/")
 
