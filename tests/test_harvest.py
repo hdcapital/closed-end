@@ -140,3 +140,31 @@ def test_a_negative_nta_is_treated_as_a_wrong_column_not_a_small_number():
     res = clean([_rec(code="PQR", nta_per_share=-0.21, market_cap=3e8)])
     assert res.records[0].nta_per_share is None
     assert res.records[0].market_cap == 3e8
+
+
+def test_total_assets_is_never_reported_as_market_cap():
+    """What the market pays and what the fund owns are different numbers, and
+    the gap between them is the discount. Collapsing one into the other would
+    make a trust on a 30% discount look fairly priced."""
+    r = Record(code="HICL", exchange="LSE", name="HICL Infrastructure",
+               market_cap=None, total_assets=3.0e9, nta_per_share=None)
+    res = clean([r])
+    assert len(res.records) == 1                 # kept: total assets is data
+    assert res.records[0].market_cap is None     # but not pretended to be cap
+    assert res.records[0].total_assets == 3.0e9
+
+
+def test_a_row_with_only_total_assets_still_survives():
+    res = clean([Record(code="XYZ", exchange="LSE", name="Some Trust",
+                        total_assets=5e8)])
+    assert [r.code for r in res.records] == ["XYZ"]
+
+
+def test_isin_is_carried_through_and_prefers_the_richer_duplicate():
+    thin = Record(code="SMT", exchange="LSE", name="Scottish Mortgage",
+                  market_cap=1.4e10)
+    rich = Record(code="SMT", exchange="LSE", name="Scottish Mortgage",
+                  market_cap=1.4e10, isin="GB00BLDYK618", total_assets=1.5e10)
+    res = clean([thin, rich])
+    assert len(res.records) == 1
+    assert res.records[0].isin == "GB00BLDYK618"

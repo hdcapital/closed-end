@@ -90,9 +90,13 @@ def main(argv=None) -> int:
         b["n"] += 1
         b["cap"] += r.market_cap is not None
         b["nta"] += r.nta_per_share is not None
-    print(f"\n  {'exchange':10}{'funds':>7}{'with mkt cap':>14}{'with NTA':>10}")
+        b["isin"] = b.get("isin", 0) + (r.isin is not None)
+        b["ta"] = b.get("ta", 0) + (r.total_assets is not None)
+    print(f"\n  {'exchange':10}{'funds':>7}{'mkt cap':>10}{'NTA':>7}"
+          f"{'tot assets':>12}{'ISIN':>7}")
     for ex, b in sorted(by_ex.items()):
-        print(f"  {ex:10}{b['n']:>7}{b['cap']:>14}{b['nta']:>10}")
+        print(f"  {ex:10}{b['n']:>7}{b['cap']:>10}{b['nta']:>7}"
+              f"{b['ta']:>12}{b['isin']:>7}")
 
     if result.dropped:
         reasons = {}
@@ -106,14 +110,16 @@ def main(argv=None) -> int:
     print("\n" + "=" * 78)
     print("SAMPLE — 25 largest by market cap")
     print("=" * 78)
-    print(f"  {'code':7}{'exch':6}{'name':38}{'mkt cap':>12}{'NTA':>10}  {'unit':16}{'sector':18}")
+    print(f"  {'code':7}{'exch':6}{'name':34}{'mkt cap':>11}{'tot assets':>12}"
+          f"{'NTA':>10}  {'sector':18}")
     ranked = sorted(result.records,
                     key=lambda r: -(r.market_cap or 0))[:25]
     for r in ranked:
         nta = f"{r.nta_per_share:,.4f}" if r.nta_per_share is not None else "—"
-        print(f"  {r.code:7}{r.exchange:6}{(r.name or '')[:36]:38}"
-              f"{_fmt_money(r.market_cap, r.currency):>12}{nta:>10}  "
-              f"{(r.nta_unit or '—'):16}{(r.sector or '')[:16]:18}")
+        print(f"  {r.code:7}{r.exchange:6}{(r.name or '')[:32]:34}"
+              f"{_fmt_money(r.market_cap, r.currency):>11}"
+              f"{_fmt_money(r.total_assets, r.currency):>12}{nta:>10}  "
+              f"{(r.sector or '')[:16]:18}")
 
     out = _write(args.out, [r.as_row() for r in result.records], COLUMNS)
     dropped = _write(DROPPED_OUT, result.dropped,

@@ -35,6 +35,8 @@ REQUIRED_HEADER_HINTS = ["company"]
 COLUMN_SPEC = {
     "code":        {"match": ["tidm", "ticker", "epic", "code", "sedol"],
                     "not": ["sector", "isin"]},
+    "isin":        ["isin"],
+    "listing":     {"match": ["listing"], "not": ["date"]},
     "name":        ["company name", "investment company", "company", "name"],
     "sector":      {"match": ["aic sector", "sector"], "not": ["code"]},
     "manager":     ["management group", "asset manager", "manager"],
@@ -133,6 +135,16 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
 
     cap_mult = unit_multiplier(cmap.header_for("market_cap"))
     ta_mult = unit_multiplier(cmap.header_for("total_assets"))
+    if not cmap.has("nav"):
+        # Stated plainly because it bounds what this source can deliver: the
+        # industry overview carries assets and market cap, not NAV per share.
+        # The AIC's Monthly Information Release is the file that has NAVs, but
+        # it is distributed to data providers rather than published here.
+        info["warnings"].append(
+            "the AIC industry overview has no NAV-per-share column — UK rows "
+            "will carry market cap and total assets but no NTA. The AIC's "
+            "Monthly Information Release (MIR) is the file with NAVs and needs "
+            "a licence or a data-provider relationship")
     key_col = cmap.index.get("code", cmap.index["name"])
 
     out = []
@@ -142,11 +154,10 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
         if not name:
             continue
         cap = to_float(cmap.get(row, "market_cap"))
-        if cap is None:
-            cap, mult = to_float(cmap.get(row, "total_assets")), ta_mult
-        else:
-            mult = cap_mult
+        ta = to_float(cmap.get(row, "total_assets"))
         nav, nav_unit = nta_from(cmap.get(row, "nav"), cmap.header_for("nav"), CURRENCY)
+        isin = cmap.get(row, "isin")
+        isin = str(isin).strip().upper() if isin else None
 
         out.append(Record(
             code=cmap.get(row, "code"),   # never the name: "3i Group plc" -> "3I" is wrong
@@ -156,7 +167,9 @@ def harvest(fetcher) -> Tuple[List[Record], dict]:
             sector=(str(cmap.get(row, "sector")).strip()
                     if cmap.get(row, "sector") is not None else None),
             currency=CURRENCY,
-            market_cap=cap * mult if cap is not None else None,
+            isin=isin if (isin and len(isin) == 12) else None,
+            market_cap=cap * cap_mult if cap is not None else None,
+            total_assets=ta * ta_mult if ta is not None else None,
             nta_per_share=nav,
             nta_unit=nav_unit,
             price=to_float(cmap.get(row, "price")),

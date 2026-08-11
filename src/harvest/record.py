@@ -25,9 +25,9 @@ from typing import List, Optional
 
 # The columns of the output table, in order.
 COLUMNS = [
-    "code", "exchange", "name", "vehicle_type", "sector",
-    "currency", "market_cap", "nta_per_share", "nta_unit", "price",
-    "discount", "nta_date", "as_of", "source", "source_url",
+    "code", "isin", "exchange", "name", "vehicle_type", "sector",
+    "currency", "market_cap", "total_assets", "nta_per_share", "nta_unit",
+    "price", "discount", "nta_date", "as_of", "source", "source_url",
 ]
 
 # Per-share values outside this band are not per-share values.
@@ -47,11 +47,16 @@ _NON_FUND_RE = re.compile(
 class Record:
     code: str
     exchange: str
+    isin: Optional[str] = None
     name: Optional[str] = None
     vehicle_type: Optional[str] = None      # LIC | LIT | investment_trust | VCT
     sector: Optional[str] = None
     currency: Optional[str] = None
     market_cap: Optional[float] = None      # currency units, not millions
+    # Total assets is NOT a substitute for market cap: one is what the market
+    # pays, the other is what the fund owns, and the gap between them is the
+    # discount this whole exercise is about. Kept in its own column.
+    total_assets: Optional[float] = None
     nta_per_share: Optional[float] = None   # major unit (dollars / pounds)
     nta_unit: Optional[str] = None          # declared_major | declared_pence | assumed_major
     price: Optional[float] = None
@@ -185,7 +190,7 @@ def clean(raw_records: List[Record]) -> CleanResult:
             r.nta_per_share, r.nta_unit = None, None
         if r.market_cap is not None and r.market_cap <= 0:
             r.market_cap = None
-        if r.market_cap is None and r.nta_per_share is None:
+        if r.market_cap is None and r.nta_per_share is None and r.total_assets is None:
             out.drop(code, r.name or "", "no market cap and no NTA")
             continue
 
@@ -195,7 +200,8 @@ def clean(raw_records: List[Record]) -> CleanResult:
             # Same vehicle from two sources: keep the richer row.
             prev = seen[key]
             richer = max((prev, r), key=lambda x: sum(
-                v is not None for v in (x.market_cap, x.nta_per_share, x.price)))
+                v is not None for v in (x.market_cap, x.nta_per_share,
+                                        x.price, x.isin, x.total_assets)))
             seen[key] = richer
             continue
         seen[key] = r
