@@ -108,6 +108,34 @@ class ColumnMap:
         return field in self.index
 
 
+def describe(sheets: Dict[str, List[list]], max_rows: int = 6,
+             max_cells: int = 14) -> str:
+    """A compact picture of what a workbook actually contains.
+
+    Attached to every parse failure. A parser that reports "no recognisable
+    header" and nothing else forces a human to download the file to learn
+    anything; one that shows the rows it rejected usually makes the fix
+    obvious from the log alone.
+    """
+    out = []
+    for name, rows in list(sheets.items())[:8]:
+        out.append(f"sheet '{name}' ({len(rows)} rows)")
+        shown = 0
+        for i, row in enumerate(rows):
+            cells = [str(c)[:28] for c in row[:max_cells] if c is not None and str(c).strip()]
+            if not cells:
+                continue
+            out.append(f"    r{i}: {' | '.join(cells)}")
+            shown += 1
+            if shown >= max_rows:
+                break
+    return "\n".join(out)
+
+
+def header_row_text(header_row: List) -> str:
+    return " | ".join(str(c)[:30] for c in header_row if c is not None and str(c).strip())
+
+
 def find_header(rows: List[list], required: Sequence[str],
                 max_scan: int = 40) -> Optional[int]:
     """Index of the first row matching every `required` pattern.

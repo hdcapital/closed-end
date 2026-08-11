@@ -129,15 +129,19 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
 
     if best is None:
         result.warnings.append(
-            "no sheet with a recognisable LIC/LIT header "
-            f"(sheets seen: {', '.join(sheets)[:200]})"
+            "no sheet with a recognisable LIC/LIT header. Workbook contains:\n"
+            + tabular.describe(sheets)
         )
         return result
 
     _, sheet_name, rows, idx, cmap = best
     result.sheet = sheet_name
     if cmap.missing:
-        result.warnings.append(f"unmapped columns on '{sheet_name}': {', '.join(cmap.missing)}")
+        # Name the header we actually got: an unmapped column is usually a
+        # renamed one, and the fix is a new entry in COLUMN_SPEC.
+        result.warnings.append(
+            f"unmapped columns on '{sheet_name}': {', '.join(cmap.missing)}"
+            f" | header seen: {tabular.header_row_text(cmap.raw_header)}")
 
     seen = set()
     for row in tabular.data_rows(rows, idx, cmap.index["ticker"]):

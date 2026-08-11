@@ -98,6 +98,10 @@ class ForwardReturn:
             "drag": self.drag,
             "total": self.total,
             "windup_scenario": self.windup_scenario,
+            # Persisted so nothing downstream can present a scored-but-
+            # unrankable fund as a recommendation.
+            "rankable": self.rankable,
+            "exclusion_reason": self.exclusion_reason,
             "reasons": self.reasons + self.growth.reasons + self.reversion.reasons,
         }
 

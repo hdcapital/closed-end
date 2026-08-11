@@ -111,12 +111,16 @@ def build(conn, fetcher, cfg, list_url: str = None) -> dict:
 
     if best is None:
         stats["status"] = fetch.PARSE_ERROR
-        stats["warnings"].append("no sheet with a recognisable instrument-list header")
+        stats["warnings"].append(
+            "no sheet with a recognisable instrument-list header. Workbook contains:\n"
+            + tabular.describe(sheets))
         return stats
 
     _, sheet_name, rows, idx, cmap = best
     if cmap.missing:
-        stats["warnings"].append(f"unmapped columns on '{sheet_name}': {', '.join(cmap.missing)}")
+        stats["warnings"].append(
+            f"unmapped columns on '{sheet_name}': {', '.join(cmap.missing)}"
+            f" | header seen: {tabular.header_row_text(cmap.raw_header)}")
 
     patterns = compile_exclusions(cfg)
     now = utcnow_iso()

@@ -17,10 +17,10 @@ on:
     inputs:
       max_funds:
         description: "Cap funds in the price phase (blank = uncapped; Yahoo is the slow leg)"
-        default: "25"
+        default: "40"
       archive_months:
         description: "Cap ASX archived monthly reports to fetch"
-        default: "24"
+        default: "84"
   push:
     branches: [claude/closed-end-screening-engine-bw13wg]
 
@@ -75,7 +75,7 @@ jobs:
           print(f"archive_months set to {months} for this run")
           PY
         env:
-          ARCHIVE_MONTHS: ${{ inputs.archive_months || '24' }}
+          ARCHIVE_MONTHS: ${{ inputs.archive_months || '84' }}
 
       - name: "Phase 1 — universe"
         continue-on-error: true
@@ -87,7 +87,7 @@ jobs:
 
       - name: "Phase 2b — prices"
         continue-on-error: true
-        run: python -m src.run --phase prices --max-funds ${{ inputs.max_funds || '25' }}
+        run: python -m src.run --phase prices --max-funds ${{ inputs.max_funds || '40' }}
 
       - name: "Phase 4 inputs — register"
         continue-on-error: true
