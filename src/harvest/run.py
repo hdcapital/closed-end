@@ -64,7 +64,7 @@ def _discount_sanity(records) -> None:
     cares about, so it gets checked rather than assumed.
     """
     from ..util import median
-    derived = [r for r in records if r.discount_basis == "mcap_over_nta_total"]
+    derived = [r for r in records if r.discount_basis == "mcap_over_gross_assets"]
     if not derived:
         return
     print("\n  derived discounts (mcap / NTA total - 1):")
@@ -75,9 +75,18 @@ def _discount_sanity(records) -> None:
         hit = next((r for r in derived if r.code == code), None)
         if hit:
             print(f"    {code:6}{hit.discount * 100:>8.1f}%   expected: {expected}")
-    if med is not None and med < -0.20:
-        print("    !! median below -20%: the asset figure is probably GROSS of "
-              "gearing, not net. Geared sectors will look systematically cheap.")
+    # Verdict from the 2026-08-11 run: the AIC figure IS gross. Greencoat UK
+    # Wind read -39.9% against a real discount nearer -20%, Pershing Square
+    # -43.9%, HarbourVest -30.6% — all heavily geared, all overstated, and the
+    # p10 of -52.8% is not a distribution UK trusts actually have. The median
+    # test alone missed it (-14.5%), because gearing skews the tail, not the
+    # middle. Ungeared equity trusts are unaffected and exact.
+    p10 = sorted(r.discount for r in derived)[max(0, int(len(derived) * 0.10) - 1)]
+    if p10 < -0.45:
+        print(f"    !! p10 = {p10 * 100:.1f}%: too wide to be real. The asset "
+              "figure is GROSS of gearing, so geared funds — infrastructure, "
+              "property, private equity — read cheaper than they are, by "
+              "roughly whatever they borrow. Ungeared trusts are exact.")
 
 
 def main(argv=None) -> int:

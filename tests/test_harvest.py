@@ -168,7 +168,7 @@ def test_discount_is_derived_from_aggregates_when_no_per_share_nav_exists():
                         market_cap=9.0e8, nta_total=1.0e9)])
     r = res.records[0]
     assert r.discount == pytest.approx(-0.10)
-    assert r.discount_basis == "mcap_over_nta_total"
+    assert r.discount_basis == "mcap_over_gross_assets"
 
 
 def test_a_published_discount_is_never_overwritten_by_a_derived_one():

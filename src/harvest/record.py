@@ -62,7 +62,11 @@ class Record:
     nta_unit: Optional[str] = None          # declared_major | declared_pence | assumed_major
     price: Optional[float] = None
     discount: Optional[float] = None        # fraction, negative = discount
-    discount_basis: Optional[str] = None    # published | price_over_nta | mcap_over_nta_total
+    # published            — the source states it (ASX does)
+    # mcap_over_gross_assets — derived, and BIASED WIDE by any gearing. See the
+    #                          gearing note in run.py: the AIC asset figure is
+    #                          gross, so a geared fund reads cheaper than it is.
+    discount_basis: Optional[str] = None
     nta_date: Optional[str] = None
     as_of: Optional[str] = None
     source: Optional[str] = None
@@ -199,7 +203,7 @@ def clean(raw_records: List[Record]) -> CleanResult:
         # So a source with no per-share NAV can still yield a real discount.
         if r.discount is None and r.market_cap and r.nta_total:
             r.discount = r.market_cap / r.nta_total - 1.0
-            r.discount_basis = "mcap_over_nta_total"
+            r.discount_basis = "mcap_over_gross_assets"
         elif r.discount is not None and r.discount_basis is None:
             r.discount_basis = "published"
 
