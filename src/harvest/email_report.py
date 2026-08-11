@@ -10,7 +10,7 @@ Credentials come from the environment and are never written anywhere:
     GMAIL_USERNAME      the sending Gmail address
     GMAIL_APP_PASSWORD  an app password (Google account > Security > 2-Step
                         Verification > App passwords) — NOT the account password
-    MAIL_TO             recipient; defaults to GMAIL_USERNAME
+    MAIL_TO             recipient(s), comma-separated; defaults to GMAIL_USERNAME
 
 The HTML uses inline styles only, because Gmail's renderer strips most of a
 <style> block; what survives everywhere is styling carried on the tags
@@ -221,9 +221,11 @@ def render_text(s):
 
 
 def build_email(s, xlsx_path, sender, to):
+    # One address or several: "a@x.com, b@y.com" becomes a proper To list.
+    recipients = [a.strip() for a in str(to).split(",") if a.strip()]
     msg = EmailMessage()
     msg["From"] = sender
-    msg["To"] = to
+    msg["To"] = ", ".join(recipients)
     msg["Subject"] = (f"Closed-end universe: {s['total']} funds, "
                       f"{s['n_exact']} exact discounts — {s['as_of']}")
     msg.set_content(render_text(s))

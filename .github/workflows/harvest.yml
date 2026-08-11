@@ -38,7 +38,8 @@ jobs:
         env:
           GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
+          # Comma-separated recipients. A MAIL_TO secret overrides the default.
+          MAIL_TO: ${{ secrets.MAIL_TO || 'danielconorsims@gmail.com, daniel@whileyclose.com' }}
         # The guard lives in the shell because the secrets context is not
         # available in a step-level `if` — referencing it there is a workflow
         # parse error and the whole run dies with zero jobs.

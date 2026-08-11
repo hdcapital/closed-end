@@ -85,8 +85,10 @@ def test_the_email_has_html_text_and_the_attachment(tmp_path):
         "subtitle": "s", "facts": [], "by_basis": [], "notes": [],
     }, path)
     s = summarise(ROWS)
-    msg = build_email(s, path, "sender@gmail.com", "owner@gmail.com")
+    msg = build_email(s, path, "sender@gmail.com",
+                      "owner@gmail.com, second@work.com")
     assert "4 funds" in msg["Subject"] and "3 exact" in msg["Subject"]
+    assert msg["To"] == "owner@gmail.com, second@work.com"
     parts = {p.get_content_type() for p in msg.walk()}
     assert "text/plain" in parts and "text/html" in parts
     att = [p for p in msg.walk() if p.get_filename()]
