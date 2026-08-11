@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+# Cached source documents: regenerable, and some are large spreadsheets/PDFs.
+# The DB is a build artefact of them, so neither belongs in git history.
+data/raw/
+data/db/
+report/*.html
+report/*.csv
+.venv/

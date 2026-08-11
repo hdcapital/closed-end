@@ -1,0 +1,143 @@
+#!/usr/bin/env python3
+"""Tolerant spreadsheet reading.
+
+The ASX monthly report and the LSE instrument list are human-facing
+spreadsheets: title banners above the real header, footnotes below it, columns
+renamed between editions ("ASX Code" -> "Code" -> "ASX code"), and the odd
+merged cell. Hardcoding cell coordinates against files like these produces a
+parser that works exactly once.
+
+So: find the header row by looking for one that matches enough expected
+patterns, then map logical field names to whichever column header matches.
+When a required field can't be located, say so loudly — a silently mis-mapped
+column is how a screen ends up ranking on the wrong number.
+"""
+
+import csv
+import io
+import re
+from typing import Dict, List, Optional, Sequence
+
+
+def _norm(s) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", str(s or "").lower()).strip()
+
+
+def read_sheets(content: bytes, filename: str = "") -> Dict[str, List[list]]:
+    """Return {sheet_name: rows}. Handles .xlsx/.xlsm via openpyxl and CSV.
+
+    .xls (old binary) is deliberately unsupported: it needs xlrd, which no
+    longer reads xls securely. If a source only offers .xls the caller should
+    record that as an unsupported-format status rather than guess.
+    """
+    name = (filename or "").lower()
+    head = content[:8]
+    if head[:2] == b"PK":                       # zip container => xlsx/xlsm
+        return _read_xlsx(content)
+    if head[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        raise ValueError("legacy .xls (OLE2) format is not supported; need .xlsx or .csv")
+    if name.endswith((".csv", ".txt")) or b"," in content[:4096] or b"\t" in content[:4096]:
+        return {"csv": _read_csv(content)}
+    raise ValueError(f"unrecognised spreadsheet format for {filename or 'document'}")
+
+
+def _read_xlsx(content: bytes) -> Dict[str, List[list]]:
+    from openpyxl import load_workbook
+    wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    out: Dict[str, List[list]] = {}
+    try:
+        for ws in wb.worksheets:
+            rows = []
+            for row in ws.iter_rows(values_only=True):
+                rows.append(list(row))
+            out[ws.title] = rows
+    finally:
+        wb.close()
+    return out
+
+
+def _read_csv(content: bytes) -> List[list]:
+    text = content.decode("utf-8-sig", "replace")
+    sample = text[:8192]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t|")
+    except csv.Error:
+        dialect = csv.excel
+    return [list(r) for r in csv.reader(io.StringIO(text), dialect)]
+
+
+class ColumnMap:
+    """Maps logical field -> column index, by fuzzy header match."""
+
+    def __init__(self, header_row: List, spec: Dict[str, Sequence[str]]):
+        self.header = [_norm(h) for h in header_row]
+        self.raw_header = list(header_row)
+        self.index: Dict[str, int] = {}
+        self.missing: List[str] = []
+        for field, patterns in spec.items():
+            idx = self._find(patterns)
+            if idx is None:
+                self.missing.append(field)
+            else:
+                self.index[field] = idx
+
+    def _find(self, patterns: Sequence[str]) -> Optional[int]:
+        # Exact normalised match first, then substring — in pattern order, so
+        # the caller controls precedence ("pre tax nta" before "nta").
+        for pat in patterns:
+            p = _norm(pat)
+            for i, h in enumerate(self.header):
+                if h == p:
+                    return i
+        for pat in patterns:
+            p = _norm(pat)
+            if not p:
+                continue
+            for i, h in enumerate(self.header):
+                if p in h:
+                    return i
+        return None
+
+    def get(self, row: List, field: str):
+        i = self.index.get(field)
+        if i is None or i >= len(row):
+            return None
+        return row[i]
+
+    def has(self, field: str) -> bool:
+        return field in self.index
+
+
+def find_header(rows: List[list], required: Sequence[str],
+                max_scan: int = 40) -> Optional[int]:
+    """Index of the first row matching every `required` pattern.
+
+    Requiring *all* patterns (rather than a count) keeps a banner row like
+    "ASX Investment Products Monthly Report — Code of Practice" from being
+    mistaken for the header just because it contains the word "code".
+    """
+    for i, row in enumerate(rows[:max_scan]):
+        cells = [_norm(c) for c in row if c is not None]
+        if not cells:
+            continue
+        if all(any(_norm(pat) in c for c in cells) for pat in required):
+            return i
+    return None
+
+
+def data_rows(rows: List[list], header_idx: int, key_col: int):
+    """Rows after the header that still look like data.
+
+    Stops at the first run of blank keys, which is how these files separate the
+    table from their footnotes ("Source: ASX", "* NTA is before tax", ...).
+    """
+    blanks = 0
+    for row in rows[header_idx + 1:]:
+        key = row[key_col] if key_col < len(row) else None
+        if key is None or not str(key).strip():
+            blanks += 1
+            if blanks >= 3:
+                break
+            continue
+        blanks = 0
+        yield row

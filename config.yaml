@@ -1,0 +1,270 @@
+# Closed-end fund / LIC screening engine — every tunable lives here.
+# Nothing in src/ hardcodes a prior, weight or threshold; if you find one,
+# that's a bug worth fixing.
+
+run:
+  # Horizon for the forward-return model, in years.
+  horizon_years: 5
+  # A fund needs at least this much NTA history to be ranked. Funds below it
+  # go to the "insufficient history" appendix rather than being silently dropped.
+  min_years_history: 5
+  # Price must be within this many days of the matched NTA observation for a
+  # discount to be considered fresh enough to use.
+  max_price_nta_gap_days: 45
+  # A price older than this is reported as stale (still stored, flagged).
+  stale_price_days: 10
+
+http:
+  user_agent: "hdcapital-closed-end-screener/0.1 (+https://github.com/hdcapital/closed-end)"
+  # Seconds between requests to the same host. Politeness is not optional:
+  # these are public bodies' servers and we want to keep our access.
+  min_interval_seconds: 1.5
+  timeout_seconds: 45
+  max_retries: 3
+  # Honour robots.txt. Turning this off is a decision for the repo owner to
+  # make deliberately, not something the code should do quietly.
+  respect_robots: true
+  cache_dir: data/raw
+  # Re-fetch a cached document after this many days. Monthly reports never
+  # change once published, so the cache is close to permanent for them.
+  cache_ttl_days: 30
+
+universe:
+  exclude_etfs: true
+  exclude_reits: true
+  exclude_spacs: true
+  # Name/description patterns that mark a vehicle as out of universe.
+  exclusion_patterns:
+    - "\\bETF\\b"
+    - "\\bETP\\b"
+    - "exchange traded fund"
+    - "exchange traded product"
+    - "\\bSPAC\\b"
+    - "special purpose acquisition"
+    - "\\bREIT\\b"
+    - "real estate investment trust"
+    - "\\bunit trust\\b"
+    - "open[- ]ended"
+    - "\\bOEIC\\b"
+    - "\\bICVC\\b"
+    - "structured product"
+    - "\\bwarrant"
+
+sources:
+  asx:
+    # The monthly Investment Products report: official, monthly, and carries
+    # NTA + premium/discount for every LIC/LIT. The landing page is scraped for
+    # the current download link rather than guessing a filename pattern, because
+    # ASX has moved these files more than once.
+    monthly_report_landing:
+      - "https://www.asx.com.au/issuers/investment-products/asx-investment-products-monthly-report"
+      - "https://www2.asx.com.au/issuers/investment-products/asx-investment-products-monthly-report"
+    funds_statistics_landing:
+      - "https://www.asx.com.au/issuers/investment-products/asx-funds-statistics"
+    # How many months of archived reports to attempt on a full refresh.
+    archive_months: 130
+  uk:
+    # LSE publishes instrument lists as spreadsheets under docs.londonstockexchange.com.
+    # The landing page is parsed for the live link; the fallbacks are the
+    # filenames the list has historically used.
+    instrument_list_landing:
+      - "https://www.londonstockexchange.com/reports?tab=instruments"
+    instrument_list_fallbacks:
+      - "https://docs.londonstockexchange.com/sites/default/files/reports/Issuer%20list.xlsx"
+      - "https://docs.londonstockexchange.com/sites/default/files/reports/List%20of%20all%20companies.xlsx"
+    # FTSE/LSE segment codes that mark a closed-ended investment fund.
+    closed_end_icb_codes: ["30204000", "30204010", "30204020"]
+    closed_end_segment_names:
+      - "closed ended investment funds"
+      - "closed-ended investment funds"
+      - "equity investment instruments"
+      - "aim investment companies"
+    aic_landing: "https://www.theaic.co.uk/aic/find-compare-investment-companies"
+  nz:
+    # The NZ universe is ~a dozen vehicles; the seed below is human-verified and
+    # cross-checked against the NZX instrument list where that is reachable.
+    # SEMI-MANUAL BY DESIGN — see README.
+    instrument_list:
+      - "https://www.nzx.com/markets/NZSX"
+    # Only vehicles the author is confident are NZX-listed closed-end investment
+    # companies. This list is KNOWN INCOMPLETE and needs owner sign-off against
+    # the live NZX instrument list before the NZ leg is trusted — see PROGRESS.md.
+    seed_funds:
+      - {ticker: "KFL", name: "Kingfish Limited",      sector: "small_cap_equity", verified: false}
+      - {ticker: "BRM", name: "Barramundi Limited",    sector: "equity",           verified: false}
+      - {ticker: "MLN", name: "Marlin Global Limited", sector: "equity",           verified: false}
+  prices:
+    # Yahoo Finance via yfinance. Prices only feed discounts and dividend yield,
+    # so one convenience source at daily granularity is an accepted trade-off.
+    provider: "yfinance"
+    suffixes: {asx: ".AX", uk: ".L", nz: ".NZ"}
+    lookback_years: 12
+
+# ---------------------------------------------------------------------------
+# Phase 3 — conservative expected forward return
+# ---------------------------------------------------------------------------
+forward_return:
+  # Asymmetric base weights on (g5, g10).
+  deteriorating_weights: {g5: 0.6, g10: 0.4}   # g5 <  g10 — weight recent decay
+  improving_weights:     {g5: 0.3, g10: 0.7}   # g5 >= g10 — anchor to the long run
+  # In the improving case, never let the base exceed the long-run figure by
+  # more than this. Hot recent performance does not get extrapolated.
+  improving_max_uplift_over_long_run: 0.01
+  # Shrinkage to the sector prior: w = n_years / (n_years + shrinkage_k)
+  shrinkage_k: 10
+  # Hard cap on the shrunk growth estimate before the haircut.
+  growth_cap: 0.12
+  # Flat haircut for model optimism in the growth term.
+  haircut: 0.010
+  # Extra haircut where fees are high enough to compound against the holder.
+  fee_haircut: 0.005
+  fee_haircut_ocr_threshold: 0.015     # ongoing charges ratio above 1.5%
+  fee_haircut_if_performance_fee: true
+  # Deliberately modest asset-class priors.
+  priors:
+    equity: 0.065
+    small_cap_equity: 0.070
+    debt: 0.050
+    property: 0.050
+    private_equity: 0.070
+    infrastructure: 0.060
+    hedge_multi_asset: 0.045
+    unknown: 0.050                      # the humble default
+  # Discount reversion.
+  d_star_weights: {own: 0.5, peer: 0.5}
+  # Fraction of the gap that closes when the fund is CHEAPER than target.
+  reversion_fraction_when_cheap: 0.5
+  # Fraction that closes when the fund is TIGHTER than target (premiums fully deflate).
+  reversion_fraction_when_tight: 1.0
+  # Positive discount reversion is scaled by min(1, |z| / z_full_credit).
+  z_full_credit: 1.5
+  # Minimum peer-group size before falling back to a wider peer definition.
+  min_peer_group: 5
+  # Trading friction, discount-vol drag, and general model optimism.
+  # An honest fudge factor — see README.
+  drag: 0.005
+  # Income is left out of the headline to avoid double counting; trailing yield
+  # is reported as its own column. See README for the reasoning.
+  include_yield_in_forward_return: false
+  # Wind-up scenario (reported separately, never in the headline).
+  windup:
+    horizon_years: 3
+    terminal_discount: -0.02            # exit at 2% below NTA
+    # Only computed for funds in the top decile of activist score.
+    top_decile_only: true
+
+# ---------------------------------------------------------------------------
+# Phase 4 — activist target score
+# ---------------------------------------------------------------------------
+activist:
+  pillar_weights: {prize: 0.40, register: 0.35, endgame: 0.25}
+
+  prize:
+    weights: {discount_depth: 0.45, persistence: 0.30, underperformance: 0.25}
+    # Discount depth is scored on the gap below d_star: 0pp -> 0, this -> 100.
+    depth_full_credit_gap: 0.15
+    # Persistence: share of the last N years spent wider than the threshold.
+    persistence_years: 3
+    persistence_discount_threshold: -0.10
+    # Market-cap sweet spot, per currency. Below lo or above hi scores 0;
+    # inside [lo_full, hi_full] scores 100; linear ramps between.
+    # NB plain integers, not 50e6 — PyYAML resolves "50e6" to a *string*
+    # (YAML 1.1 scientific notation needs "5.0e+7"), which would silently
+    # break the size score.
+    size_sweet_spot:
+      GBP: {lo: 20000000, lo_full: 50000000,  hi_full: 600000000,  hi: 2000000000}
+      AUD: {lo: 40000000, lo_full: 100000000, hi_full: 1000000000, hi: 3000000000}
+      NZD: {lo: 40000000, lo_full: 100000000, hi_full: 1000000000, hi: 3000000000}
+    # 5y NAV underperformance vs sector median: this many pp behind -> 100.
+    underperformance_full_credit: 0.03
+
+  register:
+    weights:
+      known_activist: 0.45
+      concentration: 0.25
+      insider: 0.20
+      retail: 0.10
+    # A known activist already on the register is the strongest single signal.
+    known_activist_score: 100
+    # Names matched case-insensitively against holder names.
+    known_activists:
+      global:
+        - "Saba Capital"
+        - "City of London Investment Management"
+        - "1607 Capital"
+        - "Allspring"
+        - "Lazard Asset Management"
+        - "Metage Capital"
+        - "Boaz Weinstein"
+        - "Elliott"
+        - "Elliott Advisors"
+        - "Elliott Investment Management"
+        - "Almitas Capital"
+        - "Staude Capital"
+        - "Global Value Fund"
+        - "Weiss Asset Management"
+        - "Karpus"
+        - "Bulldog Investors"
+      asx:
+        - "Wilson Asset Management"
+        - "WAM Capital"
+        - "Sandon Capital"
+        - "Samuel Terry"
+        - "Geoff Wilson"
+        - "Australian Leaders Fund"
+        - "Cadence Capital"
+    # Ideal register: fragmented, no blocking stake.
+    concentration:
+      top20_ideal_lo: 0.30
+      top20_ideal_hi: 0.60
+      # A single holder above this is close to a blocking stake.
+      single_holder_block: 0.20
+      single_holder_penalty: 60          # points subtracted at/above the block
+    insider:
+      low_threshold: 0.02                # < 2% — nobody entrenched
+      neutral_hi: 0.10                   # 2–10% neutral
+      block_threshold: 0.25              # > 25% — campaigns near-unwinnable
+      low_score: 100
+      neutral_score: 50
+      block_score: 0
+    # Retail-heavy registers organise slowly — a mild negative, not a veto.
+    retail_heavy_score: 40
+    retail_neutral_score: 60
+    # Below this many institutional filings we infer a retail-heavy register.
+    retail_filing_count_threshold: 3
+
+  endgame:
+    weights: {liquidity: 0.45, triggers: 0.35, governance: 0.20}
+    # How readily the portfolio can be liquidated near NAV.
+    liquidity_by_sector:
+      equity: 95
+      small_cap_equity: 75
+      debt: 55
+      hedge_multi_asset: 55
+      infrastructure: 35
+      property: 30
+      private_equity: 20
+      unknown: 50
+    triggers:
+      # Points per trigger present, capped at 100.
+      continuation_vote_within_2y: 40
+      manager_agreement_expiring: 25
+      recent_missed_continuation: 30
+      unused_buyback_authority: 20
+      tender_offer_history: 15
+    governance:
+      # Externally managed on gross assets: entrenched, but a clear villain —
+      # net mildly positive for a campaign narrative.
+      external_manager_gross_assets: 60
+      staggered_board: -15
+      long_tenured_chair_years: 9
+      long_tenured_chair_penalty: -10
+      base: 50
+
+report:
+  top_forward_return: 30
+  top_activist: 20
+  # A fund needs to clear both bars to make the priority "overlap" pile.
+  overlap_min_forward_return: 0.08
+  overlap_min_activist_score: 60
+  output_dir: report
