@@ -1,0 +1,94 @@
+name: Monthly full refresh
+
+on:
+  workflow_dispatch:
+    inputs:
+      exchange:
+        description: "Restrict to one exchange"
+        type: choice
+        options: [all, asx, uk, nz]
+        default: all
+      offline:
+        description: "Use only cached documents (no network)"
+        type: boolean
+        default: false
+  schedule:
+    # 6th of the month, 04:23 UTC. The ASX Investment Products report for the
+    # prior month lands in the first few business days, so the 6th gives it
+    # room; the odd minute avoids the on-the-hour scheduling crush.
+    - cron: "23 4 6 * *"
+
+concurrency: screen-monthly
+
+jobs:
+  screen:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Raw documents are cached so a re-run doesn't re-fetch the same
+      # archived monthly reports — they never change once published.
+      - name: Restore raw document cache
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: closed-end-raw-${{ github.run_id }}
+          restore-keys: |
+            closed-end-raw-
+
+      # The SQLite store is the accumulated panel: losing it means re-fetching
+      # ten years of archived reports, so it is restored before the run and
+      # saved after it.
+      - name: Restore fund database
+        uses: actions/cache@v4
+        with:
+          path: data/db
+          key: closed-end-db-${{ github.run_id }}
+          restore-keys: |
+            closed-end-db-
+
+      - name: Offline selftest
+        run: python -m src.selftest
+
+      - name: Unit tests
+        run: python -m pytest tests/ -q
+
+      - name: Full refresh
+        run: |
+          ARGS="--phase all --exchange ${{ inputs.exchange || 'all' }}"
+          [ "${{ inputs.offline }}" = "true" ] && ARGS="$ARGS --offline"
+          python -m src.run $ARGS
+        env:
+          # Optional: the sibling market-ingestion lake supplies NTA and
+          # substantial-holder announcements. Absent credentials simply mean
+          # those layers report unavailable.
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+
+      - name: Commit the report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f report/screen.csv report/screen.html
+          git diff --staged --quiet || git commit -m "Monthly screen: $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-${{ github.run_id }}
+          path: |
+            report/
+          if-no-files-found: warn

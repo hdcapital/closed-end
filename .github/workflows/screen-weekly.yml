@@ -1,0 +1,72 @@
+name: Weekly price & discount refresh
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Mondays 05:11 UTC — after Friday's closes have settled everywhere.
+    - cron: "11 5 * * 1"
+
+concurrency: screen-weekly
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Restore raw document cache
+        uses: actions/cache@v4
+        with:
+          path: data/raw
+          key: closed-end-raw-${{ github.run_id }}
+          restore-keys: |
+            closed-end-raw-
+
+      - name: Restore fund database
+        uses: actions/cache@v4
+        with:
+          path: data/db
+          key: closed-end-db-${{ github.run_id }}
+          restore-keys: |
+            closed-end-db-
+
+      - name: Offline selftest
+        run: python -m src.selftest
+
+      # Prices only: the universe and the NTA panel are monthly-cadence data,
+      # so re-fetching them weekly would spend the sources' bandwidth to learn
+      # nothing.
+      - name: Refresh prices, rescore, rebuild report
+        run: |
+          python -m src.run --phase prices
+          python -m src.run --phase report
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_BUCKET_NAME: ${{ secrets.AWS_BUCKET_NAME }}
+          AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+          S3_LAKE_PREFIX: "market-data/"
+
+      - name: Commit the report
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f report/screen.csv report/screen.html
+          git diff --staged --quiet || git commit -m "Weekly discount refresh: $(date -u +%Y-%m-%d)"
+          git push
+
+      - name: Upload report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screen-weekly-${{ github.run_id }}
+          path: report/
+          if-no-files-found: warn
