@@ -93,10 +93,24 @@ Until one is chosen the UK leg stays at zero funds and says so in the report.
   evidence coverage, which the `coverage` column states.
 - NZ is three seed funds, `verified: false`, listing-confirmed against NZX.
 - 70 tests + selftest, green offline and on a clean runner.
-- The benchmark-index exclusion is unit-tested (XSOAI/XJOAI rejected, AFI/WAM/
-  ARG/PE1 kept) but has **not yet been eyeballed in a live diagnose table** —
-  the probe output displaced it from the log tail in the run where it landed.
-  The next run shows it directly.
+- The benchmark-index exclusion is **confirmed live** (run 31456876680): the
+  top-20 table now runs BKI, KAT, ACQ, MRE, GC1, CD3 with no XSOAI, and MRE is
+  correctly withheld ("only 1.6y of NTA history and no stated 5y"). Unit-tested
+  as well (XSOAI/XJOAI rejected, AFI/WAM/ARG/PE1 kept).
+
+### Where the ASX leg stands, end of session
+
+Working end to end against the live source: 92 funds discovered and classified,
+~100k price rows with zero currency mismatches, both models scoring, ranked
+CSV + HTML with every headline decomposed beside its inputs. Top of the table
+reads 7.45% / 6.77% / 6.63%, and the funds that cannot be ranked say why.
+
+The remaining constraint is evidential, not mechanical: **register and event
+data are empty**, so the activist score rests on the prize and endgame pillars
+alone. Pillar B is the one that decides whether a campaign is winnable. Treat
+the activist ranking as a shortlist of where to look, not a finding, until
+either the lake credentials are wired into CI or a direct filing collector
+exists.
 
 
 
