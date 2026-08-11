@@ -153,3 +153,53 @@ def test_column_exclusions_are_honoured_directly():
     for f in ("nta", "nta_pre_tax", "nta_post_tax"):
         if cmap.has(f):
             assert "Prem/Disc" not in REAL_HEADER[cmap.index[f]]
+
+
+# ---------------------------------------------------------------------------
+# Archive URL construction
+# ---------------------------------------------------------------------------
+
+LIVE_URL = ("https://www.asx.com.au/content/dam/asx/issuers/"
+            "asx-investment-products-reports/2026/excel/"
+            "asx-investment-products-jun-2026-abs.xlsx")
+
+
+def test_archive_template_substitutes_month_and_year_directory():
+    """The landing page links only ~24 months of LIC reports, and most of the
+    spreadsheets it does link are the ETF editions. History therefore has to be
+    constructed from the pattern of a URL we have seen work."""
+    from src.universe.asx import archive_url_template
+    build = archive_url_template(LIVE_URL)
+    assert build is not None
+    assert build(2026, 6) == LIVE_URL
+    assert build(2025, 3) == (
+        "https://www.asx.com.au/content/dam/asx/issuers/"
+        "asx-investment-products-reports/2025/excel/"
+        "asx-investment-products-mar-2025-abs.xlsx")
+    # December must not roll into the next year's directory.
+    assert "/2019/" in build(2019, 12) and "dec-2019" in build(2019, 12)
+
+
+def test_archive_template_declines_an_unrecognisable_url():
+    from src.universe.asx import archive_url_template
+    assert archive_url_template("https://example.invalid/report.xlsx") is None
+    assert archive_url_template("") is None
+    assert archive_url_template(None) is None
+
+
+def test_constructed_archive_covers_the_requested_depth():
+    """84 months requested must reach back seven years, not two."""
+    from src.universe.asx import archive_url_template
+    import datetime
+    build = archive_url_template(LIVE_URL)
+    today = datetime.date.today()
+    year, month = today.year, today.month
+    urls = []
+    for _ in range(84):
+        month -= 1
+        if month == 0:
+            year, month = year - 1, 12
+        urls.append(build(year, month))
+    assert len(set(urls)) == 84
+    oldest_year = min(int(u.split("-")[-2]) for u in urls)
+    assert today.year - oldest_year >= 6

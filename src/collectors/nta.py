@@ -28,12 +28,16 @@ def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:
     """Parse archived monthly reports into a monthly NTA + discount panel."""
     stats = {"reports": 0, "failed": 0, "nta_rows": 0, "price_rows": 0,
              "warnings": [], "months": [], "header_signatures": [],
-             "reports_with_no_nta": 0}
+             "reports_with_no_nta_column": 0, "reports_not_lic": 0,
+             "reports_missing": 0}
 
     for url in urls:
         doc = fetcher.get(url, kind="asx-monthly-archive")
         if not doc.ok:
-            stats["failed"] += 1
+            if doc.http_status == 404 or "404" in (doc.detail or ""):
+                stats["reports_missing"] += 1
+            else:
+                stats["failed"] += 1
             db.log_source(conn, url=url, kind="asx-monthly-archive",
                           status=doc.status, detail=doc.detail)
             continue
@@ -91,21 +95,36 @@ def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:
         # Only store observations for funds already in the universe: the
         # foreign key is what stops a typo'd ticker inventing a fund.
         known = _known_fund_ids(conn)
+        nta_rows_all = list(nta_rows)
         nta_rows = [r for r in nta_rows if r["fund_id"] in known]
         price_rows = [r for r in price_rows if r["fund_id"] in known]
-        if not nta_rows:
-            stats["reports_with_no_nta"] += 1
+        if not nta_rows_all:
+            stats["reports_with_no_nta_column"] += 1
+        elif not nta_rows:
+            # Parsed NTAs, but none belonged to a fund in our universe: this is
+            # the ETF / structured-product edition of the same spreadsheet, and
+            # contributing nothing is the correct outcome, not a failure.
+            stats["reports_not_lic"] += 1
         stats["nta_rows"] += db.insert_nta(conn, nta_rows)
         stats["price_rows"] += db.insert_prices(conn, price_rows)
         conn.commit()
 
     # Coverage, not just success: 84 files that all parse but yield no NTA is a
     # mapping failure wearing a green tick.
-    if stats["reports_with_no_nta"]:
+    if stats["reports_with_no_nta_column"]:
         stats["warnings"].append(
-            f"{stats['reports_with_no_nta']} of {stats['reports']} archived report(s) "
-            "parsed but produced no NTA level — the NTA column is unmapped in "
-            "those editions")
+            f"{stats['reports_with_no_nta_column']} of {stats['reports']} archived "
+            "report(s) parsed but produced no NTA level at all — the NTA column is "
+            "unmapped in those editions")
+    if stats["reports_not_lic"]:
+        stats["warnings"].append(
+            f"{stats['reports_not_lic']} report(s) carried NTAs for no fund in our "
+            "universe — the ETF/structured-product editions of the same "
+            "spreadsheet, correctly contributing nothing")
+    if stats["reports_missing"]:
+        stats["warnings"].append(
+            f"{stats['reports_missing']} constructed archive URL(s) were not "
+            "published (404) — expected when reaching past the retained archive")
     stats["warnings"].extend(stats["header_signatures"][:8])
     return stats
 

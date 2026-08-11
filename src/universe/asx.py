@@ -6,6 +6,7 @@ Built first, because it is the best-sourced leg of the project: one official
 file gives identity, mandate, size, NTA and discount in one pass.
 """
 
+import re
 from typing import List, Optional, Tuple
 
 from .. import db, fetch
@@ -131,15 +132,81 @@ def _store_stated(conn, fund_id: str, rec, url: str, now: str) -> None:
                            detail=f"as published by ASX: {url}")
 
 
-def archived_report_urls(fetcher, cfg) -> List[str]:
-    """Links to prior months' reports, for the historical panel.
+_MONTHS = ["jan", "feb", "mar", "apr", "may", "jun",
+           "jul", "aug", "sep", "oct", "nov", "dec"]
 
-    Scraped from the landing pages rather than constructed, for the same
-    reason as the current report. An empty list means the archive wasn't
-    reachable — not that no archive exists.
+# The live current-report URL looks like
+#   .../asx-investment-products-reports/2026/excel/asx-investment-products-jun-2026-abs.xlsx
+# so both the year directory and the "mon-year" stem are substitutable.
+_STEM_RE = re.compile(
+    r"(?P<mon>jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*[-_](?P<year>20\d{2})",
+    re.IGNORECASE,
+)
+
+
+def archive_url_template(url: str):
+    """Turn a known report URL into a `(year, month) -> url` builder.
+
+    The landing page only links about two years of monthly reports, and most of
+    the spreadsheets it *does* link are the ETF and structured-product editions
+    of the same file — they parse perfectly and contribute nothing, because
+    their tickers are not LICs. Scraping alone therefore caps the panel at ~24
+    months, which is below the model's own 5-year floor and would leave the
+    screen permanently unrankable.
+
+    So the archive is built by substituting into the pattern of a URL we have
+    actually seen work, rather than by inventing one. Months that were never
+    published simply 404 and are recorded as such.
     """
+    m = _STEM_RE.search(url or "")
+    if not m:
+        return None
+    stem_year = m.group("year")
+
+    def build(year: int, month: int) -> str:
+        out = url[:m.start()] + f"{_MONTHS[month - 1]}-{year}" + url[m.end():]
+        # The path also carries a year directory; swap it when it matches the
+        # year we are replacing, and leave anything else alone.
+        return out.replace(f"/{stem_year}/", f"/{year}/")
+
+    return build
+
+
+def archived_report_urls(fetcher, cfg, current_url: str = None) -> List[str]:
+    """URLs for the historical monthly panel, newest first.
+
+    Two sources, deduped: whatever the landing pages link, plus URLs
+    constructed from the pattern of the current report. An empty list means the
+    archive wasn't reachable — not that no archive exists.
+    """
+    import datetime
     from .common import find_links
+
     urls, seen = [], set()
+
+    def add(u):
+        if u and u not in seen:
+            seen.add(u)
+            urls.append(u)
+
+    if not current_url:
+        current_url, _ = discover_report_url(fetcher, cfg)
+    add(current_url)
+
+    # Constructed history first: these are the files that actually carry LIC
+    # rows for months the landing page no longer links.
+    limit = int(cfg.num("sources.asx.archive_months"))
+    build = archive_url_template(current_url) if current_url else None
+    if build:
+        today = datetime.date.today()
+        year, month = today.year, today.month
+        for _ in range(limit):
+            month -= 1
+            if month == 0:
+                year, month = year - 1, 12
+            add(build(year, month))
+
+    # Then anything the landing pages link that we haven't already got.
     landings = list(cfg.get("sources.asx.monthly_report_landing"))
     landings += list(cfg.get("sources.asx.funds_statistics_landing", []))
     for landing in landings:
@@ -147,8 +214,6 @@ def archived_report_urls(fetcher, cfg) -> List[str]:
         if not page.ok:
             continue
         for u in find_links(page.text, landing, extensions=(".xlsx", ".xlsm", ".csv")):
-            if u not in seen:
-                seen.add(u)
-                urls.append(u)
-    limit = int(cfg.num("sources.asx.archive_months"))
-    return urls[:limit]
+            add(u)
+
+    return urls[:max(limit, 1) + 24]
