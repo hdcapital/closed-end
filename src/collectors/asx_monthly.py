@@ -140,6 +140,7 @@ class ParseResult:
     records: List[AsxRecord] = field(default_factory=list)
     as_of: Optional[str] = None
     sheet: Optional[str] = None
+    sheets_seen: dict = field(default_factory=dict)
     warnings: List[str] = field(default_factory=list)
 
 
@@ -224,6 +225,15 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
 
     _, sheet_name, rows, idx, cmap = best
     result.sheet = sheet_name
+    # Which tabs exist and which one we used. Logged always, not only on
+    # failure: the sheet we pick is a silent decision otherwise, and a name
+    # like "Spotlight LIC List" is worth being able to check against the rest
+    # of the workbook in case it is a curated subset rather than the full list.
+    result.sheets_seen = {n: len(r) for n, r in sheets.items()}
+    result.warnings.append(
+        "sheets in workbook: "
+        + ", ".join(f"{n} ({len(r)} rows)" for n, r in sheets.items())
+        + f" | using '{sheet_name}'")
     if cmap.missing:
         # Name the header we actually got: an unmapped column is usually a
         # renamed one, and the fix is a new entry in COLUMN_SPEC.
