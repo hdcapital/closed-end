@@ -25,14 +25,38 @@ jobs:
       - run: python -m pytest tests/test_harvest.py -q
       - name: Harvest
         run: python -m src.harvest.run
-      - name: Show the table
+      # Last step on purpose: these few rows answer whether the derived UK
+      # discount is trustworthy, and the tail of the log is where that is
+      # readable. 3i has traded at a premium for years and City of London near
+      # par; if they come out deeply discounted the AIC asset figure is gross
+      # of gearing and every geared fund is being flattered.
+      - name: Canary check on the derived UK discounts
         if: always()
         run: |
-          echo "=== data/universe.csv (first 40 rows) ==="
-          head -40 data/universe.csv || true
-          echo
-          echo "=== row count ==="
-          wc -l data/universe.csv || true
+          python - <<'PY'
+          import csv
+          rows = list(csv.DictReader(open("data/universe.csv")))
+          print(f"total rows: {len(rows)}")
+          uk = [r for r in rows if r["exchange"] == "LSE"]
+          der = [r for r in uk if r["discount_basis"] == "mcap_over_nta_total"]
+          print(f"LSE rows: {len(uk)}  with derived discount: {len(der)}")
+          print(f"\n{'code':7}{'name':34}{'mkt cap':>16}{'NTA total':>16}{'disc':>9}")
+          for code in ("III", "CTY", "SMT", "FCIT", "HICL", "UKW", "PSH", "HVPE"):
+              r = next((x for x in rows if x["code"] == code), None)
+              if not r:
+                  print(f"{code:7}(not present)")
+                  continue
+              d = float(r["discount"]) * 100 if r["discount"] else None
+              print(f"{code:7}{r['name'][:32]:34}{float(r['market_cap'] or 0):>16,.0f}"
+                    f"{float(r['nta_total'] or 0):>16,.0f}"
+                    f"{(f'{d:.1f}%' if d is not None else '—'):>9}")
+          vals = sorted(float(r["discount"]) for r in der if r["discount"])
+          if vals:
+              q = lambda p: vals[int(len(vals) * p)]
+              print(f"\nderived discount spread: p10={q(.10)*100:.1f}%  "
+                    f"median={q(.50)*100:.1f}%  p90={q(.90)*100:.1f}%  "
+                    f"premiums={sum(1 for v in vals if v > 0)}/{len(vals)}")
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:
