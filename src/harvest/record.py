@@ -80,6 +80,9 @@ class Record:
 class CleanResult:
     records: List[Record] = field(default_factory=list)
     dropped: List[dict] = field(default_factory=list)
+    linked: int = 0             # code-less rows given a ticker by ISIN
+    unlinkable: int = 0         # code-less rows whose ISIN matched nothing
+    merged: int = 0             # vehicles assembled from more than one source
 
     def drop(self, code: str, name: str, reason: str,
              market_cap=None, nta=None) -> None:
@@ -164,6 +167,82 @@ def nta_from(value, header: str, currency: str):
     return v, "assumed_major"
 
 
+def link_by_isin(records: List[Record]):
+    """Give code-less rows the ticker their ISIN already carries elsewhere.
+
+    The AIC publishes two files and only one of them has a ticker. The industry
+    overview has both ISIN and TIDM; the Monthly Information Release — the file
+    with the *net* assets, and so the only exact discount — is keyed by ISIN
+    alone. Without this step every MIR row fails the stock-code test and the
+    better of the two sources is thrown away.
+
+    An ISIN identifies a share class, which is exactly the granularity wanted:
+    it will not let an ordinary share borrow a C share's ticker.
+    """
+    by_isin = {}
+    for r in records:
+        code = normalise_code(r.code)
+        if code and r.isin:
+            by_isin.setdefault(str(r.isin).strip().upper(), code)
+    linked = unlinkable = 0
+    for r in records:
+        if normalise_code(r.code):
+            continue
+        code = by_isin.get(str(r.isin or "").strip().upper())
+        if code:
+            r.code = code
+            linked += 1
+        elif r.isin:
+            unlinkable += 1
+    return linked, unlinkable
+
+
+# How much a discount is worth believing, by how it was arrived at.
+#   price_over_nav_net     — the AIC MIR: net shareholders' funds. Exact.
+#   published              — the ASX states its own; trust the publisher.
+#   mcap_over_gross_assets — derived off gross assets, so biased wide by
+#                            whatever the fund borrows. An estimate, last.
+_BASIS_RANK = {"price_over_nav_net": 3, "published": 2,
+               "mcap_over_gross_assets": 1}
+
+# Fields that describe one valuation and are only true together. A net NAV and
+# a gross NAV must never end up in the same row, so these move as a block.
+_VALUATION = ("nta_total", "nta_per_share", "nta_unit", "price",
+              "discount", "discount_basis", "nta_date")
+
+
+def _basis_rank(r: Record) -> int:
+    return _BASIS_RANK.get(r.discount_basis, 0) if r.discount is not None else 0
+
+
+def merge(a: Record, b: Record) -> Record:
+    """One vehicle, two sources: take the better valuation, fill the gaps.
+
+    Not "keep the row with more cells filled" — that would let a gross-assets
+    discount beat an exact one just for carrying a market cap alongside. The
+    valuation is decided on its own merits and everything else is filled in
+    around it.
+    """
+    from dataclasses import replace
+    keep, other = (a, b) if _basis_rank(a) >= _basis_rank(b) else (b, a)
+    out = replace(keep)
+    # Only when the winner has no valuation at all is it worth borrowing the
+    # loser's — otherwise the block stands as the source published it.
+    if _basis_rank(keep) == 0:
+        for f in _VALUATION:
+            if getattr(out, f) is None:
+                setattr(out, f, getattr(other, f))
+    for f in ("isin", "name", "sector", "currency", "vehicle_type",
+              "market_cap", "as_of"):
+        if getattr(out, f) is None:
+            setattr(out, f, getattr(other, f))
+    out.source = "+".join(dict.fromkeys(
+        s for s in (keep.source, other.source) if s))
+    out.source_url = " | ".join(dict.fromkeys(
+        u for u in (keep.source_url, other.source_url) if u))
+    return out
+
+
 def clean(raw_records: List[Record]) -> CleanResult:
     """Validate and deduplicate into the uniform set.
 
@@ -172,6 +251,7 @@ def clean(raw_records: List[Record]) -> CleanResult:
     dropped is reported with a reason; nothing disappears quietly.
     """
     out = CleanResult()
+    out.linked, out.unlinkable = link_by_isin(raw_records)
     seen = {}
     for r in raw_records:
         code = normalise_code(r.code)
@@ -214,12 +294,8 @@ def clean(raw_records: List[Record]) -> CleanResult:
         r.code = code
         key = f"{r.exchange}:{code}"
         if key in seen:
-            # Same vehicle from two sources: keep the richer row.
-            prev = seen[key]
-            richer = max((prev, r), key=lambda x: sum(
-                v is not None for v in (x.market_cap, x.nta_per_share,
-                                        x.price, x.isin, x.nta_total)))
-            seen[key] = richer
+            seen[key] = merge(seen[key], r)
+            out.merged += 1
             continue
         seen[key] = r
 

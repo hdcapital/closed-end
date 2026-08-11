@@ -15,7 +15,7 @@ import os
 import sys
 
 from .. import config, db, fetch
-from . import aic, asx
+from . import aic, aic_mir, asx
 from .record import COLUMNS, clean
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -64,17 +64,32 @@ def _discount_sanity(records) -> None:
     cares about, so it gets checked rather than assumed.
     """
     from ..util import median
-    derived = [r for r in records if r.discount_basis == "mcap_over_gross_assets"]
+    priced = [r for r in records if r.discount is not None]
+    if not priced:
+        return
+    print("\n  discounts by how they were arrived at:")
+    print(f"    {'basis':24}{'n':>5}{'p10':>9}{'median':>9}{'p90':>9}"
+          f"{'premiums':>10}")
+    for basis in sorted({r.discount_basis for r in priced}):
+        g = sorted(r.discount for r in priced if r.discount_basis == basis)
+        pct = lambda q: g[max(0, min(len(g) - 1, int(len(g) * q) - 1))] * 100
+        print(f"    {basis or '—':24}{len(g):>5}{pct(0.10):>8.1f}%"
+              f"{median(g) * 100:>8.1f}%{pct(0.90):>8.1f}%"
+              f"{sum(1 for d in g if d > 0):>10}")
+
+    print("\n  canaries:")
+    for code, expected in CANARIES.items():
+        hit = next((r for r in priced if r.code == code), None)
+        if hit:
+            print(f"    {code:6}{hit.discount * 100:>8.1f}%  "
+                  f"{(hit.discount_basis or '—'):24}expected: {expected}")
+        else:
+            print(f"    {code:6}{'—':>8}   not priced")
+
+    derived = [r for r in priced
+               if r.discount_basis == "mcap_over_gross_assets"]
     if not derived:
         return
-    print("\n  derived discounts (mcap / NTA total - 1):")
-    med = median([r.discount for r in derived])
-    print(f"    n={len(derived)}  median={med * 100:.1f}%"
-          f"  premium-rated={sum(1 for r in derived if r.discount > 0)}")
-    for code, expected in CANARIES.items():
-        hit = next((r for r in derived if r.code == code), None)
-        if hit:
-            print(f"    {code:6}{hit.discount * 100:>8.1f}%   expected: {expected}")
     # Verdict from the 2026-08-11 run: the AIC figure IS gross. Greencoat UK
     # Wind read -39.9% against a real discount nearer -20%, Pershing Square
     # -43.9%, HarbourVest -30.6% — all heavily geared, all overstated, and the
@@ -93,7 +108,8 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Harvest the closed-end universe")
     ap.add_argument("--offline", action="store_true")
     ap.add_argument("--out", default=DEFAULT_OUT)
-    ap.add_argument("--source", default="all", choices=["all", "asx", "aic"])
+    ap.add_argument("--source", default="all",
+                    choices=["all", "asx", "aic", "mir"])
     args = ap.parse_args(argv)
 
     cfg = config.load()
@@ -107,6 +123,12 @@ def main(argv=None) -> int:
         infos.append(info)
     if args.source in ("all", "aic"):
         recs, info = aic.harvest(fetcher)
+        raw += recs
+        infos.append(info)
+    # The MIR goes last so its rows can borrow a ticker from the industry
+    # overview by ISIN — it publishes no TIDM of its own.
+    if args.source in ("all", "mir"):
+        recs, info = aic_mir.harvest(fetcher)
         raw += recs
         infos.append(info)
 
@@ -130,6 +152,9 @@ def main(argv=None) -> int:
     print(f"  raw rows in      {len(raw)}")
     print(f"  clean rows out   {len(result.records)}")
     print(f"  dropped          {len(result.dropped)}")
+    print(f"  ISIN-linked      {result.linked} code-less rows given a ticker "
+          f"({result.unlinkable} ISINs matched nothing)")
+    print(f"  merged           {result.merged} vehicles seen in >1 source")
 
     by_ex = {}
     for r in result.records:
