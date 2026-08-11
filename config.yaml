@@ -138,6 +138,11 @@ forward_return:
   reversion_fraction_when_tight: 1.0
   # Positive discount reversion is scaled by min(1, |z| / z_full_credit).
   z_full_credit: 1.5
+  # The spec does not define damping when z cannot be computed (short or flat
+  # discount history). Granting full credit there is the self-deception the
+  # damping exists to prevent, so the default withholds the upside entirely.
+  # Set to 1.0 to grant full credit, or e.g. 0.5 for a middle course.
+  z_missing_damping: 0.0
   # Minimum peer-group size before falling back to a wider peer definition.
   min_peer_group: 5
   # Trading friction, discount-vol drag, and general model optimism.
@@ -160,7 +165,7 @@ activist:
   pillar_weights: {prize: 0.40, register: 0.35, endgame: 0.25}
 
   prize:
-    weights: {discount_depth: 0.45, persistence: 0.30, underperformance: 0.25}
+    weights: {discount_depth: 0.35, persistence: 0.25, size: 0.20, underperformance: 0.20}
     # Discount depth is scored on the gap below d_star: 0pp -> 0, this -> 100.
     depth_full_credit_gap: 0.15
     # Persistence: share of the last N years spent wider than the threshold.

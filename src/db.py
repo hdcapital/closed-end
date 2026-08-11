@@ -194,10 +194,31 @@ _FUND_COLS = [
 ]
 
 
+def _with_provenance(row: dict) -> dict:
+    """Fill the provenance columns a caller may have left off.
+
+    A column DEFAULT does not help here: passing an explicit NULL overrides it,
+    and these helpers always bind every column. `retrieved_at` defaults to now
+    because that is genuinely when the row entered the store; `source` is left
+    alone, so an untraceable figure still fails the NOT NULL constraint rather
+    than acquiring a fake source.
+    """
+    out = dict(row)
+    if not out.get("source_status"):
+        out["source_status"] = "ok"
+    if not out.get("retrieved_at"):
+        from .util import utcnow_iso
+        out["retrieved_at"] = utcnow_iso()
+    return out
+
+
 def upsert_fund(conn: sqlite3.Connection, row: dict) -> None:
     """Insert or update a fund. Existing non-null columns are only overwritten
     when the incoming row actually carries a value, so a thin source (a price
     feed) can't blank out a rich one (the ASX monthly report)."""
+    row = _with_provenance(row)
+    if not row.get("status"):
+        row["status"] = "live"
     vals = [row.get(c) for c in _FUND_COLS]
     updates = ", ".join(
         f"{c}=COALESCE(excluded.{c}, {c})"
@@ -215,7 +236,7 @@ def upsert_fund(conn: sqlite3.Connection, row: dict) -> None:
 def insert_nta(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     cols = ["fund_id", "date", "nta_per_share", "nta_type", "currency",
             "source", "source_url", "source_status", "retrieved_at"]
-    data = [tuple(r.get(c) for c in cols) for r in rows]
+    data = [tuple(_with_provenance(r).get(c) for c in cols) for r in rows]
     conn.executemany(
         f"INSERT INTO nta_observations ({','.join(cols)}) "
         f"VALUES ({','.join('?' * len(cols))}) "
@@ -230,7 +251,7 @@ def insert_nta(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
 def insert_prices(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     cols = ["fund_id", "date", "close", "currency", "volume", "dividend",
             "source", "source_url", "source_status", "retrieved_at"]
-    data = [tuple(r.get(c) for c in cols) for r in rows]
+    data = [tuple(_with_provenance(r).get(c) for c in cols) for r in rows]
     conn.executemany(
         f"INSERT INTO price_observations ({','.join(cols)}) "
         f"VALUES ({','.join('?' * len(cols))}) "
@@ -245,7 +266,7 @@ def insert_prices(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
 def insert_holders(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     cols = ["fund_id", "date", "holder_name", "holder_type", "pct",
             "source", "source_url", "source_status", "retrieved_at"]
-    data = [tuple(r.get(c) for c in cols) for r in rows]
+    data = [tuple(_with_provenance(r).get(c) for c in cols) for r in rows]
     conn.executemany(
         f"INSERT INTO holders ({','.join(cols)}) "
         f"VALUES ({','.join('?' * len(cols))}) "
@@ -260,7 +281,7 @@ def insert_holders(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
 def insert_events(conn: sqlite3.Connection, rows: Iterable[dict]) -> int:
     cols = ["fund_id", "event_type", "event_date", "detail",
             "source", "source_url", "source_status", "retrieved_at"]
-    data = [tuple(r.get(c) for c in cols) for r in rows]
+    data = [tuple(_with_provenance(r).get(c) for c in cols) for r in rows]
     conn.executemany(
         f"INSERT INTO fund_events ({','.join(cols)}) "
         f"VALUES ({','.join('?' * len(cols))}) "
