@@ -25,6 +25,22 @@ jobs:
       - run: python -m pytest tests/test_harvest.py -q
       - name: Harvest
         run: python -m src.harvest.run
+      # Always build the spreadsheet and the email body — they land in the
+      # artifact either way, so a run without mail credentials still leaves
+      # the full deliverable behind.
+      - name: Build spreadsheet + email body
+        run: python -m src.harvest.email_report --dry-run
+      # Sends only when the repository has Gmail credentials:
+      #   GMAIL_USERNAME      the sending Gmail address
+      #   GMAIL_APP_PASSWORD  an app password (myaccount.google.com/apppasswords)
+      #   MAIL_TO             optional; defaults to GMAIL_USERNAME
+      - name: Email the report
+        if: ${{ secrets.GMAIL_APP_PASSWORD != '' }}
+        env:
+          GMAIL_USERNAME: ${{ secrets.GMAIL_USERNAME }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+        run: python -m src.harvest.email_report
       # Last step on purpose: these few rows answer whether the derived UK
       # discount is trustworthy, and the tail of the log is where that is
       # readable. 3i has traded at a premium for years and City of London near
@@ -64,4 +80,6 @@ jobs:
           path: |
             data/universe.csv
             data/universe_dropped.csv
+            data/universe.xlsx
+            data/email.html
           if-no-files-found: warn

@@ -7,4 +7,7 @@ data/raw/
 data/db/
 report/*.html
 report/*.csv
+# Build artefacts of the email step; the CSVs are the canonical output.
+data/universe.xlsx
+data/email.html
 .venv/
