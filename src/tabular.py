@@ -67,34 +67,56 @@ def _read_csv(content: bytes) -> List[list]:
 
 
 class ColumnMap:
-    """Maps logical field -> column index, by fuzzy header match."""
+    """Maps logical field -> column index, by fuzzy header match.
 
-    def __init__(self, header_row: List, spec: Dict[str, Sequence[str]]):
+    A spec value is either a list of patterns, or a dict:
+
+        {"match": [...], "not": [...]}
+
+    The `not` list is what stops substring matching from being dangerous. The
+    ASX report has a column headed "Prem/Disc % NTA (pre-tax) at N" sitting a
+    few columns away from the real "NTA Price". A bare substring search for
+    "nta pre tax" hits the *discount* column, and the resulting series looks
+    like a fund whose NAV moved 100x in a month. Excluding any header
+    containing "prem", "disc", "%", "return" or "change" from a *level* column
+    makes that mistake unrepresentable rather than merely unlikely.
+    """
+
+    def __init__(self, header_row: List, spec: Dict[str, object]):
         self.header = [_norm(h) for h in header_row]
         self.raw_header = list(header_row)
         self.index: Dict[str, int] = {}
         self.missing: List[str] = []
-        for field, patterns in spec.items():
-            idx = self._find(patterns)
+        for field, rule in spec.items():
+            if isinstance(rule, dict):
+                patterns = rule.get("match", [])
+                exclude = rule.get("not", [])
+            else:
+                patterns, exclude = rule, []
+            idx = self._find(patterns, exclude)
             if idx is None:
                 self.missing.append(field)
             else:
                 self.index[field] = idx
 
-    def _find(self, patterns: Sequence[str]) -> Optional[int]:
+    def _allowed(self, header: str, exclude: Sequence[str]) -> bool:
+        return not any(_norm(x) in header for x in exclude if _norm(x))
+
+    def _find(self, patterns: Sequence[str],
+              exclude: Sequence[str] = ()) -> Optional[int]:
         # Exact normalised match first, then substring — in pattern order, so
-        # the caller controls precedence ("pre tax nta" before "nta").
+        # the caller controls precedence ("nta price" before "nta").
         for pat in patterns:
             p = _norm(pat)
             for i, h in enumerate(self.header):
-                if h == p:
+                if h == p and self._allowed(h, exclude):
                     return i
         for pat in patterns:
             p = _norm(pat)
             if not p:
                 continue
             for i, h in enumerate(self.header):
-                if p in h:
+                if p in h and self._allowed(h, exclude):
                     return i
         return None
 
@@ -106,6 +128,18 @@ class ColumnMap:
 
     def has(self, field: str) -> bool:
         return field in self.index
+
+    def header_for(self, field: str) -> str:
+        """The raw header text a field mapped to.
+
+        Callers use it to read the units the publisher declared rather than
+        guessing them from the values: "MER (% p.a)" carrying 0.15 means
+        0.15%, but a bare magnitude test would read it as 15%.
+        """
+        i = self.index.get(field)
+        if i is None or i >= len(self.raw_header):
+            return ""
+        return str(self.raw_header[i] or "")
 
 
 def describe(sheets: Dict[str, List[list]], max_rows: int = 6,

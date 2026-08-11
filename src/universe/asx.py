@@ -95,18 +95,40 @@ def build(conn, fetcher, cfg, report_url: str = None) -> dict:
             "status_reason": reason,
             "market_cap": rec.market_cap,
             "shares_on_issue": rec.shares_on_issue,
+            # Newly collected from the report's MER / Outperf Fee columns.
+            # Until the live run exposed these the fee haircut could never fire.
+            "ocr": rec.ocr,
+            "has_performance_fee": None if rec.has_performance_fee is None
+                                   else int(rec.has_performance_fee),
             "source": asx_monthly.SOURCE,
             "source_url": report_url,
             "source_status": doc.status,
             "retrieved_at": now,
         }
         db.upsert_fund(conn, row)
+        _store_stated(conn, row["fund_id"], rec, report_url, now)
         if reason:
             stats["excluded"] += 1
         else:
             stats["kept"] += 1
     conn.commit()
     return stats
+
+
+def _store_stated(conn, fund_id: str, rec, url: str, now: str) -> None:
+    """Manager-stated performance and yield, kept strictly apart from anything
+    computed here. The report publishes 1/3/5-year total returns; they are the
+    only performance figures available for a fund with too little archive
+    history, and the screen must never present them as its own calculation."""
+    from .. import db as _db
+    for metric, value in (("stated_total_return_1y", rec.stated_r1y),
+                          ("stated_total_return_3y", rec.stated_r3y),
+                          ("stated_total_return_5y", rec.stated_r5y),
+                          ("stated_distribution_yield", rec.dist_yield)):
+        if value is not None:
+            _db.put_metric(conn, fund_id, now[:10], metric, value,
+                           provenance="stated",
+                           detail=f"as published by ASX: {url}")
 
 
 def archived_report_urls(fetcher, cfg) -> List[str]:

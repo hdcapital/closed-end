@@ -5,6 +5,93 @@ repo owner. Newest entry first.
 
 ---
 
+## 2026-08-11 (later) — first live runs against the real sources
+
+Two GitHub Actions runs with real network access. Both green; the value was in
+what they exposed. Reachability probe: **all five hosts answered 200** from the
+runner (asx.com.au, londonstockexchange.com, theaic.co.uk, nzx.com, Yahoo), so
+the block is specific to the development session, not to the project.
+
+### What works against live data
+
+- **ASX is the strong leg, as expected.** The collector discovered the current
+  report by itself (`asx.com.au/content/dam/asx/issuers/asx-investment-products-reports/2026/excel/asx-investment-products-jun-2026-abs.xlsx`),
+  parsed 94 rows to 92 live funds + 2 excluded, and pulled **84 archived monthly
+  reports** (7 years, 6,154 NTA observations) with zero fetch failures.
+- **Prices**: 40 funds, ~99k rows, zero currency mismatches, zero failures. The
+  three "possibly delisted" tickers were reported, not silently dropped.
+- **NZX**: all three seed tickers confirmed still quoted against the live list.
+- Offline gates (61 tests + selftest) pass identically on a clean runner.
+
+### The big one: the NTA series was the discount column
+
+The live ASX header is:
+
+    ASX Code | Type | Fund Name | MER (% p.a) | Outperf Fee | Mkt Cap ($m)# |
+    Mkt Cap ($m) Change | ... | Prem/Disc % NTA (pre-tax) at N | NTA Date |
+    NTA Price | Last Close | ... | 5 Year Total Return (ann.)
+
+Three columns were mis-mapped at once, all by substring collisions:
+
+| Field | Matched | Should have matched |
+|---|---|---|
+| `nta_pre_tax` | `Prem/Disc % NTA (pre-tax) at N` | `NTA Price` |
+| `price` | `NTA Price` | `Last Close` |
+| `market_cap` | *(unmapped)* | `Mkt Cap ($m)#`, ×1e6 |
+
+So the "NAV series" was a percentage. The NTA sanity check caught it
+immediately — **607 implausible month-on-month steps**, ratios to ×1374 — and
+the model-input table showed growth "base" values of 13,000% p.a. The 12% cap
+and the 5-year history floor contained the damage (only 21 of 95 funds were
+ever rankable), but the ranking was still built on a wrong column. **No
+synthetic fixture of mine caught this, because I had invented the header.**
+
+Fixed, with the failure mode closed rather than patched:
+
+1. `ColumnMap` now takes `{"match": [...], "not": [...]}`. Level columns
+   exclude any header containing `prem`, `disc`, `%`, `return`, `change`,
+   `yield` or `date`, making the collision unrepresentable.
+2. An ingest-time plausibility guard rejects any per-share NTA outside
+   [0.005, 1000] and reports how many it rejected — the backstop for header
+   spellings nobody anticipated.
+3. `tests/test_asx_report.py` pins the **real** header verbatim, including a
+   cross-check that `price / NTA - 1` agrees with the report's own published
+   premium/discount. Mis-mapped columns cannot agree.
+4. Units now come from the header where the publisher declares them: `MER
+   (% p.a)` holding `0.15` is 15bp, and the magnitude heuristic read it as 15%.
+
+### The report is richer than assumed — now collected
+
+The same header carries **MER**, **Outperf Fee**, **Historical Distribution
+Yield** and **1/3/5-Year Total Return (ann.)**. Consequences:
+
+- `ocr` and `has_performance_fee` are now populated, so the +0.5% fee haircut
+  can fire for the first time (previously it was dead code in production).
+- Stated 1/3/5-year total returns are stored as `derived_metrics` with
+  `provenance='stated'` — the fallback for funds whose archive history is too
+  short to compute from. **Not yet wired into the model**; the pipeline still
+  ranks on computed history only. That wiring is the next obvious step and
+  needs a decision on whether a stated g5 should make a fund rankable.
+- `mandate` now maps to the `Type` column, so the 42 funds that fell to sector
+  `unknown` (and therefore the humble 5% prior) should classify properly.
+
+### Still broken / open
+
+1. **LSE remains at zero funds.** The fallback file downloads fine but is the
+   wrong file: `Issuer list.xlsx` is a September **2020** snapshot whose
+   `Companies` sheet has no ISIN and no TIDM — only Admission Date, Company
+   Name, ICB Industry, Market, Market Cap. The `find_header` guard correctly
+   refused it rather than mis-parsing. What is needed is the correct current
+   LSE instrument-list URL; the landing-page scrape didn't yield one. This is
+   the largest remaining gap — roughly 350 trusts, the biggest universe of the
+   three.
+2. **AIC confirmed client-side rendered** — fetches 200, yields no rows. Needs
+   a JSON endpoint or their data licence.
+3. **Register and events remain empty** (0 holder rows, 0 events): the lake has
+   no credentials in CI, and no direct filing collector exists.
+4. `archive_months` is trimmed by the smoke workflow for run time; a full
+   refresh should raise it back to the configured 130.
+
 ## 2026-08-11 — Phases 0–5 built; no live data validated
 
 ### The headline problem: this session had no egress to any market data source

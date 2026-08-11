@@ -22,23 +22,73 @@ from ..util import parse_date, to_float
 
 SOURCE = "asx-investment-products-monthly"
 
-# Logical field -> candidate header spellings, in precedence order.
+# Logical field -> match rules. Written against the header the live June 2026
+# report actually carries:
+#
+#   ASX Code | Type | Fund Name | MER (% p.a) | Outperf Fee | Mkt Cap ($m)# |
+#   Mkt Cap ($m) Change | Transacted Value ($) | Transacted Volume | Number of
+#   Transactions | Monthly Liquidity % | Prem/Disc % NTA (pre-tax) at N |
+#   NTA Date | NTA Price | Last Close | Year High | Year Low |
+#   Historical Distribution Yield | 1 Month Total Return | 1 Year Total Return |
+#   3 Year Total Return (ann.) | 5 Year Total Return (ann.)
+#
+# Three traps in that header, all of which bit on the first live run:
+#   * "Prem/Disc % NTA (pre-tax)" contains "nta pre tax" and will masquerade
+#     as the NTA level column unless percentage columns are excluded.
+#   * "NTA Price" contains "price" and will masquerade as the share price;
+#     the real quote is "Last Close".
+#   * "Mkt Cap ($m) Change" sits next to "Mkt Cap ($m)#".
+_LEVEL_NOT = ["prem", "disc", "%", "return", "change", "yield", "date"]
+
 COLUMN_SPEC = {
-    "ticker":       ["asx code", "asx ticker", "code", "ticker"],
-    "name":         ["company name", "fund name", "entity name", "name", "company"],
-    "mandate":      ["investment mandate", "mandate", "asset class", "investment type",
-                     "category", "sector", "strategy"],
-    "market_cap":   ["market capitalisation", "market capitalization", "market cap"],
-    "nta_pre_tax":  ["pre tax nta", "nta before tax", "nta pre tax", "pre-tax nta"],
-    "nta_post_tax": ["post tax nta", "nta after tax", "nta post tax", "post-tax nta"],
-    "nta":          ["nta per share", "nta per unit", "net tangible assets", "nta"],
-    "price":        ["share price", "closing price", "last price", "price"],
-    "premium_disc": ["premium discount", "premium/discount", "discount premium",
-                     "prem disc", "premium", "discount"],
+    "ticker":       {"match": ["asx code", "asx ticker", "code", "ticker"],
+                     "not": ["type", "name"]},
+    "name":         ["fund name", "company name", "entity name", "name"],
+    # The report calls the mandate "Type" (Domestic Equity, Global Equity,
+    # Fixed Income, ...). The exact-match pass picks it up safely.
+    "mandate":      {"match": ["type", "investment mandate", "mandate",
+                               "asset class", "category", "strategy"],
+                     "not": ["issuer"]},
+    "market_cap":   {"match": ["mkt cap", "market cap", "market capitalisation",
+                               "market capitalization"],
+                     "not": ["change", "%"]},
+    "nta_pre_tax":  {"match": ["nta price pre tax", "pre tax nta", "nta before tax",
+                               "nta pre tax"],
+                     "not": _LEVEL_NOT},
+    "nta_post_tax": {"match": ["post tax nta", "nta after tax", "nta post tax"],
+                     "not": _LEVEL_NOT},
+    "nta":          {"match": ["nta price", "nta per share", "nta per unit",
+                               "net tangible assets", "nta"],
+                     "not": _LEVEL_NOT},
+    "price":        {"match": ["last close", "closing price", "share price",
+                               "last price", "close"],
+                     "not": ["nta", "year", "high", "low", "change", "%"]},
+    "premium_disc": ["prem disc", "premium discount", "premium/discount",
+                     "discount premium", "premium", "discount"],
     "shares":       ["shares on issue", "units on issue", "securities on issue"],
     "listing_date": ["listing date", "date listed", "quotation date"],
-    "nta_date":     ["nta date", "as at", "as at date"],
+    "nta_date":     ["nta date", "as at date", "as at"],
+    # Fee facts, which drive the extra growth haircut. Previously uncollected,
+    # so the haircut could never fire.
+    "mer":          {"match": ["mer", "management expense ratio", "ongoing charge",
+                               "management fee"],
+                     "not": ["outperf", "performance"]},
+    "perf_fee":     ["outperf fee", "outperformance fee", "performance fee"],
+    # Manager-stated performance. Stored with provenance='stated' and never
+    # mixed into a computed column.
+    "yield":        ["historical distribution yield", "distribution yield", "yield"],
+    "ret_1y":       ["1 year total return"],
+    "ret_3y":       ["3 year total return"],
+    "ret_5y":       ["5 year total return"],
 }
+
+# Market cap is published in millions.
+MARKET_CAP_MULTIPLIER = 1_000_000
+
+# A per-share NTA outside this range is not a per-share NTA. This is the
+# backstop for the whole class of "wrong column" bugs: even a header spelling
+# nobody anticipated cannot inject a discount percentage into the NAV series.
+MIN_NTA, MAX_NTA = 0.005, 1000.0
 
 # The header must contain a code column and an NTA column; anything else is a
 # different table (the report also carries ETF and structured-product sections).
@@ -63,6 +113,12 @@ class AsxRecord:
     listing_date: Optional[str] = None
     nta_date: Optional[str] = None
     structure: Optional[str] = None
+    ocr: Optional[float] = None
+    has_performance_fee: Optional[bool] = None
+    dist_yield: Optional[float] = None
+    stated_r1y: Optional[float] = None
+    stated_r3y: Optional[float] = None
+    stated_r5y: Optional[float] = None
     warnings: List[str] = field(default_factory=list)
 
     @property
@@ -105,6 +161,38 @@ def _normalise_pct(value) -> Optional[float]:
     return v
 
 
+def _nta_level(value, rejected: List[str], label: str) -> Optional[float]:
+    """A per-share NTA, or None with a recorded reason.
+
+    Belt to the column-exclusion braces: a value outside the plausible
+    per-share range means the column is wrong, whatever its header said.
+    """
+    v = to_float(value)
+    if v is None:
+        return None
+    if not (MIN_NTA <= v <= MAX_NTA):
+        rejected.append(f"{label}={v}")
+        return None
+    return v
+
+
+def _percent(value, header: str = "") -> Optional[float]:
+    """A column published in percent -> a fraction.
+
+    Units come from the header wherever the publisher declares them: "MER
+    (% p.a)" holding 0.15 is fifteen basis points, and a magnitude test would
+    read it as 15% — a hundredfold error in the fee haircut. Only where the
+    header is silent do we fall back to the magnitude heuristic, which stays
+    ambiguous for genuinely sub-1% returns and is documented as such.
+    """
+    v = to_float(value)
+    if v is None:
+        return None
+    if "%" in (header or ""):
+        return v / 100.0
+    return v / 100.0 if abs(v) > 1.0 else v
+
+
 def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
     """Parse one monthly report file into records."""
     result = ParseResult(as_of=as_of)
@@ -143,7 +231,7 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
             f"unmapped columns on '{sheet_name}': {', '.join(cmap.missing)}"
             f" | header seen: {tabular.header_row_text(cmap.raw_header)}")
 
-    seen = set()
+    seen, rejected = set(), []
     for row in tabular.data_rows(rows, idx, cmap.index["ticker"]):
         ticker = str(cmap.get(row, "ticker") or "").strip().upper()
         # ASX codes are 3-6 alphanumerics; this drops sub-heading rows
@@ -159,21 +247,35 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
         mandate = cmap.get(row, "mandate")
         mandate = str(mandate).strip() if mandate is not None else None
 
+        mcap = to_float(cmap.get(row, "market_cap"))
+        perf = cmap.get(row, "perf_fee")
+        perf_str = str(perf).strip().lower() if perf is not None else ""
+
         rec = AsxRecord(
             ticker=ticker,
             name=name,
             mandate=mandate,
-            market_cap=to_float(cmap.get(row, "market_cap")),
+            market_cap=mcap * MARKET_CAP_MULTIPLIER if mcap is not None else None,
             shares_on_issue=to_float(cmap.get(row, "shares")),
-            price=to_float(cmap.get(row, "price")),
-            nta_pre_tax=to_float(cmap.get(row, "nta_pre_tax")),
-            nta_post_tax=to_float(cmap.get(row, "nta_post_tax")),
+            price=_nta_level(cmap.get(row, "price"), rejected, f"{ticker}.price"),
+            nta_pre_tax=_nta_level(cmap.get(row, "nta_pre_tax"), rejected,
+                                   f"{ticker}.nta_pre_tax"),
+            nta_post_tax=_nta_level(cmap.get(row, "nta_post_tax"), rejected,
+                                    f"{ticker}.nta_post_tax"),
             premium_discount=_normalise_pct(cmap.get(row, "premium_disc")),
+            ocr=_percent(cmap.get(row, "mer"), cmap.header_for("mer")),
+            has_performance_fee=(perf_str in {"yes", "y", "true", "1"}
+                                 if perf_str else None),
+            dist_yield=_percent(cmap.get(row, "yield"), cmap.header_for("yield")),
+            stated_r1y=_percent(cmap.get(row, "ret_1y"), cmap.header_for("ret_1y")),
+            stated_r3y=_percent(cmap.get(row, "ret_3y"), cmap.header_for("ret_3y")),
+            stated_r5y=_percent(cmap.get(row, "ret_5y"), cmap.header_for("ret_5y")),
         )
         # A generic "NTA" column only counts when there is no explicit
         # pre/post-tax pair, so the two never get conflated.
         if rec.nta_pre_tax is None and rec.nta_post_tax is None:
-            rec.nta_unspecified = to_float(cmap.get(row, "nta"))
+            rec.nta_unspecified = _nta_level(cmap.get(row, "nta"), rejected,
+                                             f"{ticker}.nta")
 
         d = parse_date(cmap.get(row, "listing_date"))
         rec.listing_date = d.isoformat() if d else None
@@ -183,6 +285,12 @@ def parse(content: bytes, filename: str = "", as_of: str = None) -> ParseResult:
 
         result.records.append(rec)
 
+    if rejected:
+        # A handful is dirty data; hundreds means a mis-mapped column.
+        result.warnings.append(
+            f"{len(rejected)} value(s) rejected as implausible per-share levels "
+            f"(e.g. {', '.join(rejected[:5])}) — if this is most of the sheet, "
+            "the column mapping is wrong, not the data")
     if not result.records:
         result.warnings.append(f"header found on '{sheet_name}' but no data rows parsed")
     return result
