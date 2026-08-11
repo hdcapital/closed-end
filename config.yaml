@@ -89,9 +89,16 @@ sources:
     # filenames the list has historically used.
     instrument_list_landing:
       - "https://www.londonstockexchange.com/reports?tab=instruments"
-    instrument_list_fallbacks:
-      - "https://docs.londonstockexchange.com/sites/default/files/reports/Issuer%20list.xlsx"
-      - "https://docs.londonstockexchange.com/sites/default/files/reports/List%20of%20all%20companies.xlsx"
+    # PROBED AND REJECTED, 2026-08-11. The numbered "Issuer list_N.xlsx" files
+    # are real and current (_90 = Feb 2025, _95 = May 2025, _100 = Sep 2025),
+    # but every edition carries the same header and NONE has a ticker or an
+    # ISIN column — only Admission Date, Company Name, ICB Industry, ICB
+    # Super-Sector, Country, Market and Market Cap. Without a TIDM there is no
+    # way to price a fund, and ICB Super-Sector is too coarse to identify a
+    # closed-ended fund. This is a company list, not an instrument list; the
+    # header guard refuses it rather than mis-parsing it. See PROGRESS.md for
+    # the alternatives that need an owner decision.
+    instrument_list_fallbacks: []
     # FTSE/LSE segment codes that mark a closed-ended investment fund.
     closed_end_icb_codes: ["30204000", "30204010", "30204020"]
     closed_end_segment_names:

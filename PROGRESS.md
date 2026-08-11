@@ -5,6 +5,90 @@ repo owner. Newest entry first.
 
 ---
 
+## 2026-08-11 (evening) — ASX leg working; UK leg blocked on data availability
+
+### ASX now produces a real ranking
+
+| | first live run | now |
+|---|---|---|
+| rankable funds | 0 | most of the universe |
+| top forward return | 96% (nonsense) | 7.45% |
+| sectors classified | 42 `unknown` | 6 `unknown`, 56 `equity` |
+| NAV sanity breaks | 607 | 30 (source defect, filtered from the series) |
+
+The top of the table now reads like a screen — LSX 7.45%, LRT 6.77%, TGF 6.63%
+— with `g_conservative`, `base`, `prior` and `r_discount` printed beside each so
+every figure can be checked by eye.
+
+### Two findings that changed the design
+
+**1. The ASX archive is ~24 months deep and cannot be extended.** Every
+constructed archive URL returns 404, so ASX does not retain older editions at
+that path. The landing page's other spreadsheet links are the ETF and
+structured-product editions of the same file: they parse perfectly and
+contribute nothing because their tickers are not LICs. Two years is the honest
+depth of this source.
+
+That made the model's 5-year floor unreachable and left the whole universe
+unrankable. The resolution is the one the brief already specified — store the
+stated 5y/10y total return where the raw series is unobtainable, tagged
+`source=stated` vs `source=computed` — and the report publishes a *5 Year Total
+Return (ann.)* for every fund. The rule is that the two never share a column,
+not that a stated figure is unusable, so **provenance is now tracked per
+window**: a fund may carry a computed since-inception return and a stated
+5-year one, each labelled (`r5_source` in the CSV, `g5 src` in the HTML).
+Computed always wins where it exists. `run.allow_stated_returns_for_ranking:
+false` reverts to recomputed-only, which today leaves ASX unrankable.
+
+**2. Benchmark index rows were being ranked as funds.** The first properly
+ranked table had XSOAI — the S&P/ASX Small Ordinaries Accumulation Index — at
+number 10. The Spotlight sheet appends benchmark rows next to the funds. Now
+excluded by name *and* by ticker shape (ASX index codes are X plus four
+letters), because either test alone has a hole.
+
+### The UK leg: probed, and the file does not exist publicly
+
+`src.probe_uk` swept the landing pages and a spread of candidate filenames. The
+result is decisive:
+
+* `Issuer list_N.xlsx` **is** real and current — `_90` = Feb 2025, `_95` = May
+  2025, `_100` = Sep 2025, numbering rising roughly five per quarter.
+* **Every edition has the same header and none carries a ticker or an ISIN:**
+  `Admission Date | Company Name | ICB Industry | ICB Super-Sector | Country of
+  Incorporation | World Region | Market | International Issuer | Company Market
+  Cap (£m)`.
+* The LSE `/reports` pages are client-side rendered and link no spreadsheets.
+
+So this is a *company* list, not an instrument list. Without a TIDM there is no
+way to price a fund, and ICB Super-Sector is far too coarse to identify a
+closed-ended one. The `find_header` guard was refusing it correctly the whole
+time; this was never a parsing bug. `instrument_list_fallbacks` is now empty
+with the finding recorded inline.
+
+**Owner decision needed — the UK universe (~350 trusts, the largest leg) needs
+one of:**
+
+1. **AIC data licence or their JSON endpoint.** Their site renders client-side,
+   so the data is behind an API the page already calls. Best fit: their sector
+   taxonomy is the one the market actually uses for peer groups.
+2. **A commercial reference-data feed** (TIDM + ISIN + ICB subsector).
+3. **The LSE's own SPA API** — the instrument list the page renders must come
+   from somewhere; identifying that endpoint is a browser-devtools job, and
+   whether scraping it is acceptable is a terms-of-service call for the owner,
+   not one the code should make quietly.
+
+Until one is chosen the UK leg stays at zero funds and says so in the report.
+
+### Still open
+
+- Register and events remain empty (0 holders, 0 events): no lake credentials
+  in CI and no direct filing collector. Activist scores therefore run at low
+  evidence coverage, which the `coverage` column states.
+- NZ is three seed funds, `verified: false`, listing-confirmed against NZX.
+- 70 tests + selftest, green offline and on a clean runner.
+
+
+
 ## 2026-08-11 (later) — first live runs against the real sources
 
 Two GitHub Actions runs with real network access. Both green; the value was in

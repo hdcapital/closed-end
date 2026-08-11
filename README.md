@@ -64,20 +64,28 @@ documented done-marker contract. Without the credentials those layers report
 | Leg | Primary source | Cross-check | Honest assessment |
 |---|---|---|---|
 | **ASX** | Monthly Investment Products report (XLSX): code, name, mandate, market cap, pre/post-tax NTA, price, premium/discount for every LIC and LIT | Per-fund monthly NTA announcements | **The best source in the project.** Official, monthly, and one archived file per month is a whole-universe panel. Build here first. |
-| **LSE** | Instrument list (XLSX) filtered to closed-ended investment funds + AIM investment companies; carries ISINs | AIC member list for the sector taxonomy | Membership is solid. NAV *history* is the hard part — see below. |
+| **LSE** | *Currently none that works* | — | **Blocked, not broken.** The public `Issuer list_N.xlsx` is a company list: no TIDM, no ISIN, ICB Super-Sector only. Probed and rejected — see PROGRESS. |
 | **NZX** | Human-verified seed list in `config.yaml`, cross-checked against the NZX instrument list | — | **Semi-manual by design and currently unverified.** ~12 vehicles; NZX publishes no clean machine-readable list of them. |
 | **Prices** | Yahoo Finance via `yfinance`, daily closes and distributions | Month-end price in the ASX report | A convenience source with guard rails, not a reference source. |
 
 ### Known limitations, source by source
 
-- **ASX archived reports.** Links are scraped from the landing page rather than
-  constructed from a filename pattern, because ASX has relocated this file more
-  than once. If the archive is not linked from the live page, historical depth
-  is whatever has already been cached.
-- **UK NAV history.** Full RNS parsing for ~350 trusts is heavy. The design is
-  layered: stated 5y/10y NAV total returns where the raw series is unobtainable
-  (tagged `stated`), and an RNS NAV parser for a configurable priority subset.
-  Coverage is meant to widen over time; today the UK leg is the thinnest.
+- **ASX archived reports.** Roughly **24 months deep, and that is the ceiling**:
+  archive URLs constructed from the current report's pattern all 404, so older
+  editions are not retained. The other spreadsheets the landing page links are
+  the ETF and structured-product editions of the same file — they parse and
+  contribute nothing, because their tickers are not LICs. Because 24 months is
+  below the model's 5-year floor, ranking uses the report's own published
+  5-year total return, tagged `stated` (see "Returns" below).
+- **ASX benchmark rows.** The Spotlight sheet appends index rows (S&P/ASX 200
+  Accumulation and friends) next to the funds. They are excluded by name and by
+  ticker shape; one reached the top-20 table before that was added.
+- **UK universe.** The LSE's public issuer list carries **no ticker and no
+  ISIN**, so it cannot identify or price a fund; `find_header` refuses it rather
+  than mis-parsing it, and the UK leg is currently empty. Three options are
+  listed in PROGRESS for the owner to choose between (AIC licence/endpoint, a
+  commercial reference feed, or the LSE SPA's own API). The RNS NAV parser
+  exists and is tested; it has nothing to point at until the universe exists.
 - **AIC.** A membership body, not a data provider. `http.respect_robots` is
   honoured, so if their robots.txt disallows the path the run records
   `robots_denied` and falls back to LSE data alone. Their list is also rendered
@@ -115,6 +123,19 @@ Reported for 5y, 10y and since-inception.
 - A trailing window is only reported when the history actually reaches back
   (20 days of tolerance for observation-date drift). A 5-year label computed
   off 3 years of data is exactly the self-deception this screen exists to avoid.
+- **Stated figures fill windows that cannot be computed**, never ones that can.
+  Provenance is per window, not per fund: `r5_source` / `r10_source` /
+  `r_all_source` each say `computed` or `stated`, so the two never share a
+  column while a fund may legitimately carry one of each. On the ASX this is
+  the difference between a working screen and an empty one, because the
+  publisher's archive is shallower than its own performance table. Turn it off
+  with `run.allow_stated_returns_for_ranking: false`.
+- **Scale breaks are dropped, not repaired.** Some ASX editions publish a small
+  fund's NTA in cents and the next in dollars. An observation more than 20x
+  from the median of its immediate neighbours is excluded from the series; the
+  comparison is local so a fund that genuinely compounded 10x is not truncated.
+  Rescaling by 100 would usually be right, and usually-right silent corrections
+  are what this screen exists to avoid.
 
 ### Discounts
 
