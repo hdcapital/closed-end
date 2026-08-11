@@ -109,6 +109,34 @@ growth of a fund that compounded 10x across the panel. And the point is
 "usually right" is exactly the silent correction this project exists to avoid.
 A gap in the series is honest; a fabricated level is not.
 
+### Fourth run: values now sane, but history coverage collapsed — OPEN
+
+With the corrected mapping the model output is finally plausible: top forward
+returns 5-10% (was 96%), `r_discount` 0-1.5% (was 86%), and sectors classify as
+`equity` off the `Type` column instead of falling to `unknown`.
+
+But **NTA coverage fell from ~67 month-ends per fund to ~19**, so every fund now
+shows 1.8 years of history and **none is rankable**. Two readings, not yet
+distinguished:
+
+* The previous 7-year history was entirely fake — it was the discount column —
+  so 1.8 years may simply be the true parseable depth of these 84 files.
+* Or older editions of the report name the NTA column something the current
+  spec doesn't reach, and the exclusion list now rejects it.
+
+The evidence that it is at least partly the second: `NTA by type` is now
+`unspecified 1732` with **zero** rows classified `pre_tax`, meaning the level is
+only ever found via the generic `NTA Price` match. The archived-report parse
+warnings that would name each edition's header were being **discarded** by
+`from_asx_archive` whenever a file parsed its rows successfully — so a file
+could parse cleanly, yield no NTA at all, and say nothing. That is now fixed:
+the collector counts reports that produced no NTA level and reports the
+distinct header signatures it saw. The next run's log should say plainly which
+editions are unmapped.
+
+**Do not read any ranking from these runs.** Nothing is rankable, register and
+event data are empty, and the archive depth is unresolved.
+
 ## 2026-08-11 — Phases 0–5 built; no live data validated
 
 ### The headline problem: this session had no egress to any market data source

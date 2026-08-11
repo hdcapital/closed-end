@@ -27,7 +27,8 @@ from .lake import NTA_TITLE_RE, LakeReader, date_range
 def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:
     """Parse archived monthly reports into a monthly NTA + discount panel."""
     stats = {"reports": 0, "failed": 0, "nta_rows": 0, "price_rows": 0,
-             "warnings": [], "months": []}
+             "warnings": [], "months": [], "header_signatures": [],
+             "reports_with_no_nta": 0}
 
     for url in urls:
         doc = fetcher.get(url, kind="asx-monthly-archive")
@@ -43,6 +44,14 @@ def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:
             stats["failed"] += 1
             stats["warnings"].append(f"{url}: {'; '.join(parsed.warnings) or 'no records'}")
             continue
+        # Older editions of the report rename columns, and a file that parses
+        # its *rows* fine can still yield no NTA level because the column it
+        # lives in went unmapped. Those warnings used to be discarded, which
+        # made a silent collapse in history coverage impossible to explain from
+        # the log. Distinct signatures only, so 84 files don't print 84 times.
+        for w in parsed.warnings:
+            if w not in stats["header_signatures"]:
+                stats["header_signatures"].append(w)
 
         stats["reports"] += 1
         if as_of:
@@ -84,10 +93,20 @@ def from_asx_archive(conn, fetcher, cfg, urls: List[str]) -> dict:
         known = _known_fund_ids(conn)
         nta_rows = [r for r in nta_rows if r["fund_id"] in known]
         price_rows = [r for r in price_rows if r["fund_id"] in known]
+        if not nta_rows:
+            stats["reports_with_no_nta"] += 1
         stats["nta_rows"] += db.insert_nta(conn, nta_rows)
         stats["price_rows"] += db.insert_prices(conn, price_rows)
         conn.commit()
 
+    # Coverage, not just success: 84 files that all parse but yield no NTA is a
+    # mapping failure wearing a green tick.
+    if stats["reports_with_no_nta"]:
+        stats["warnings"].append(
+            f"{stats['reports_with_no_nta']} of {stats['reports']} archived report(s) "
+            "parsed but produced no NTA level — the NTA column is unmapped in "
+            "those editions")
+    stats["warnings"].extend(stats["header_signatures"][:8])
     return stats
 
 
