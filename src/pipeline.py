@@ -56,6 +56,7 @@ def run(conn, cfg, as_of: str = None) -> Dict[str, FundResult]:
         fid = f["fund_id"]
         r = FundResult(fund=f)
         r.returns = returns.compute(conn, fid, as_of)
+        _apply_stated_returns(conn, fid, r.returns, cfg)
         r.discounts = discounts.compute(conn, fid, cfg, as_of)
         r.trailing_yield = prices_mod.trailing_yield(conn, fid, as_of)
         r.register = holders_mod.latest_register(conn, fid)
@@ -94,6 +95,9 @@ def run(conn, cfg, as_of: str = None) -> Dict[str, FundResult]:
             has_performance_fee=bool(r.fund.get("has_performance_fee")),
             trailing_yield=r.trailing_yield,
             peer_group=peer_label, n_peers=n_peers,
+            has_long_window=r.returns.has_long_window,
+            growth_provenance=r.returns.r5_source or r.returns.r10_source
+                              or r.returns.r_all_source or "computed",
         )
         r.d_star = r.forward.reversion.d_star
 
@@ -118,6 +122,34 @@ def run(conn, cfg, as_of: str = None) -> Dict[str, FundResult]:
     _apply_windup_policy(cfg, results)
     persist(conn, results, as_of)
     return results
+
+
+def _apply_stated_returns(conn, fund_id: str, rs, cfg) -> None:
+    """Fill return windows we could not compute with the publisher's own figures.
+
+    The ASX monthly report publishes 1/3/5-year total returns, and its archive
+    only reaches back about two years — so for most funds the 5-year window is
+    available as a *stated* number and not as a computable one. The spec
+    anticipates exactly this ("store the stated 5y/10y total return where the
+    raw series is unobtainable, tagged source=stated vs source=computed"), and
+    its real rule is that the two never share a column. They don't: every window
+    carries its own source, which the CSV and HTML both print.
+
+    Computed always wins where it exists; this only fills holes.
+    """
+    if not cfg.get("run.allow_stated_returns_for_ranking", True):
+        return
+    rows = {r["metric"]: r["value"] for r in conn.execute(
+        "SELECT metric, value FROM derived_metrics "
+        "WHERE fund_id=? AND provenance='stated' AND value IS NOT NULL", (fund_id,))}
+    stated5 = rows.get("stated_total_return_5y")
+    if rs.r5 is None and stated5 is not None:
+        rs.r5 = stated5
+        rs.r5_source = "stated"
+        rs.warnings.append(
+            "5y return is the publisher's stated figure, not recomputed here "
+            "(the ASX archive is shallower than its performance table)")
+    rs.mark_sources(cfg.num("run.min_years_history"))
 
 
 def _tri_state(v):
@@ -150,9 +182,10 @@ def persist(conn, results: Dict[str, FundResult], as_of: str) -> None:
     for fid, r in results.items():
         prov = r.returns.provenance if r.returns else "unavailable"
         for metric, value, provenance in [
-            ("nta_total_return_5y", r.returns.r5, prov),
-            ("nta_total_return_10y", r.returns.r10, prov),
-            ("nta_total_return_since_inception", r.returns.r_all, prov),
+            ("nta_total_return_5y", r.returns.r5, r.returns.r5_source or prov),
+            ("nta_total_return_10y", r.returns.r10, r.returns.r10_source or prov),
+            ("nta_total_return_since_inception", r.returns.r_all,
+             r.returns.r_all_source or prov),
             ("nta_history_years", r.returns.n_years, prov),
             ("discount_current", r.discounts.current, "computed"),
             ("discount_mean_5y", r.discounts.mean_5y, "computed"),

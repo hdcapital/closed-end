@@ -282,3 +282,39 @@ def test_scale_break_is_excluded_from_the_stored_series(conn):
     conn.commit()
     _, series = returns.choose_series(conn, "ASX:TST")
     assert all(p["nta"] < 2 for p in series)
+
+
+def test_stated_five_year_return_makes_a_short_panel_rankable(conn, cfg):
+    """The ASX archive reaches back ~2 years while the report publishes a
+    5-year total return, so without this the entire ASX universe is unrankable.
+
+    The spec's rule is that stated and computed figures never share a column —
+    not that a stated figure is unusable — so it is accepted and labelled.
+    """
+    from src.pipeline import _apply_stated_returns
+    for m_, v in [("2025-01-28", 1.00), ("2025-07-28", 1.05), ("2026-01-28", 1.10)]:
+        db.insert_nta(conn, [_nta("ASX:TST", m_, v)])
+    db.put_metric(conn, "ASX:TST", "2026-01-28", "stated_total_return_5y", 0.084,
+                  provenance="stated")
+    conn.commit()
+
+    rs = returns.compute(conn, "ASX:TST", "2026-01-28")
+    assert rs.r5 is None and not rs.has_long_window   # nothing computable
+    _apply_stated_returns(conn, "ASX:TST", rs, cfg)
+    assert rs.r5 == 0.084
+    assert rs.r5_source == "stated"
+    assert rs.r_all_source == "computed"      # the two never share a label
+    assert rs.has_long_window
+
+
+def test_stated_returns_never_override_a_computed_one(conn, cfg):
+    from src.pipeline import _apply_stated_returns
+    db.insert_nta(conn, [_nta("ASX:TST", "2021-01-01", 1.00),
+                         _nta("ASX:TST", "2026-01-01", 2.00)])
+    db.put_metric(conn, "ASX:TST", "2026-01-01", "stated_total_return_5y", 0.01,
+                  provenance="stated")
+    conn.commit()
+    rs = returns.compute(conn, "ASX:TST", "2026-01-01")
+    _apply_stated_returns(conn, "ASX:TST", rs, cfg)
+    assert rs.r5 == pytest.approx(2 ** 0.2 - 1, abs=1e-3)   # computed wins
+    assert rs.r5_source == "computed"

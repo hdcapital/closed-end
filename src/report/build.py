@@ -20,6 +20,7 @@ CSV_COLUMNS = [
     "structure", "market_cap", "status",
     "nta_total_return_5y", "nta_total_return_10y", "nta_total_return_since_inception",
     "nta_history_years", "nta_type", "returns_provenance", "nta_observations",
+    "r5_source", "r10_source", "r_all_source", "growth_provenance",
     "discount_current", "discount_date", "discount_mean_5y", "discount_mean_10y",
     "discount_mean_all", "discount_stdev_5y", "discount_zscore",
     "discount_pct_time_wide", "d_star", "peer_group", "n_peers",
@@ -54,6 +55,10 @@ def _row_for(r) -> dict:
         "nta_history_years": r.returns.n_years,
         "nta_type": r.returns.nta_type,
         "returns_provenance": r.returns.provenance,
+        "r5_source": r.returns.r5_source,
+        "r10_source": r.returns.r10_source,
+        "r_all_source": r.returns.r_all_source,
+        "growth_provenance": dec.get("growth_provenance"),
         "nta_observations": r.returns.n_observations,
         "discount_current": r.discounts.current,
         "discount_date": r.discounts.current_date,
@@ -201,7 +206,7 @@ def write_html(results: Dict[str, object], path: str, cfg, run_meta: dict = None
          ("drag", lambda r: _pct(r["drag"])),
          ("<b>Total</b>", lambda r: f"<b>{_cls(r['forward_return_total'], _pct(r['forward_return_total']))}</b>"),
          ("Yield", lambda r: _pct(r["trailing_dividend_yield"])),
-         ("Prov", lambda r: _esc(r["returns_provenance"]), "l"),
+         ("g5 src", lambda r: _esc(r["r5_source"] or "—"), "l"),
          ]))
 
     # --- 2. Activist targets -------------------------------------------------
@@ -287,13 +292,15 @@ def _headline_caveats(cfg, rows, run_meta) -> str:
             ". Figures below are computed only from what was reachable; funds "
             "with no data are listed in the appendix, never silently dropped.</div>")
 
-    stated = sum(1 for r in rows if r["returns_provenance"] == "stated")
+    stated = sum(1 for r in rows if r.get("r5_source") == "stated")
     if stated:
         out.append(
-            f"<div class='note'><b>{stated} fund(s)</b> carry manager/AIC-<i>stated</i> "
-            "performance rather than a series recomputed here. The "
-            "<code>Prov</code> column marks them; stated and computed figures "
-            "are never mixed within a column.</div>")
+            f"<div class='note'><b>{stated} fund(s)</b> use the publisher's "
+            "<i>stated</i> 5-year total return rather than one recomputed here — "
+            "the ASX monthly archive reaches back about two years while the "
+            "report itself publishes a 5-year figure. The <code>g5 src</code> "
+            "column marks every one, and stated and computed figures never "
+            "share a column.</div>")
 
     out.append(
         "<div class='note'><b>Survivorship.</b> Historical discount and return "

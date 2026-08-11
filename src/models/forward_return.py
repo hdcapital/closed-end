@@ -71,6 +71,7 @@ class ForwardReturn:
     drag: float = 0.0
     horizon_years: float = 5.0
     windup_scenario: Optional[float] = None
+    growth_provenance: str = "computed"
     rankable: bool = False
     exclusion_reason: Optional[str] = None
     reasons: List[str] = field(default_factory=list)
@@ -102,6 +103,7 @@ class ForwardReturn:
             # unrankable fund as a recommendation.
             "rankable": self.rankable,
             "exclusion_reason": self.exclusion_reason,
+            "growth_provenance": self.growth_provenance,
             "reasons": self.reasons + self.growth.reasons + self.reversion.reasons,
         }
 
@@ -266,7 +268,8 @@ def discount_reversion(cfg, *, d0, d_own, d_peer, z_score,
 
 def compute(cfg, *, g5, g10, g_all, n_years, sector, d0, d_own, d_peer, z_score,
             ocr=None, has_performance_fee=False, trailing_yield=None,
-            peer_group=None, n_peers=None) -> ForwardReturn:
+            peer_group=None, n_peers=None, has_long_window=None,
+            growth_provenance="computed") -> ForwardReturn:
     H = cfg.num("run.horizon_years")
     fr = ForwardReturn(horizon_years=H, drag=cfg.num("forward_return.drag"))
 
@@ -288,14 +291,22 @@ def compute(cfg, *, g5, g10, g_all, n_years, sector, d0, d_own, d_peer, z_score,
     else:
         fr.y_income = 0.0
 
-    # Rankability: the spec's floor is real history, not a filled-in default.
+    # Rankability: the spec's floor is five years of *data*, not five years of
+    # data we recomputed ourselves. A publisher-stated 5-year total return is
+    # five years of data; the spec's own rule about it is that stated and
+    # computed figures never share a column, which provenance handles. Where no
+    # long window exists from any source the fund goes to the appendix.
     min_years = cfg.num("run.min_years_history")
+    if has_long_window is None:
+        has_long_window = (n_years or 0) >= min_years
+    fr.growth_provenance = growth_provenance
     if fr.growth.value is None:
         fr.exclusion_reason = "no NTA total-return estimate"
-    elif n_years is None or n_years < min_years:
+    elif not has_long_window:
         fr.exclusion_reason = (
-            f"only {n_years:.1f}y of NTA history (need {min_years:g}y)"
-            if n_years else "no NTA history"
+            f"only {n_years:.1f}y of NTA history and no stated {min_years:g}y "
+            f"return (need {min_years:g}y)"
+            if n_years else "no NTA history and no stated long-window return"
         )
     elif fr.reversion.value is None:
         fr.exclusion_reason = "no discount reversion estimate"

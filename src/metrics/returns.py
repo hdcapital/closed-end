@@ -40,7 +40,29 @@ class ReturnSet:
     nta_type: Optional[str] = None
     n_observations: int = 0
     provenance: str = "computed"
+    # Provenance is tracked per window, not per fund. A fund can legitimately
+    # have a computed since-inception figure and a *stated* 5-year one when the
+    # publisher's archive is shallower than its published performance table;
+    # the spec's rule is that the two never share a column, not that a fund
+    # must use only one kind.
+    r5_source: Optional[str] = None
+    r10_source: Optional[str] = None
+    r_all_source: Optional[str] = None
+    # True when a >=5y return figure exists from any source. Rankability keys
+    # off this rather than off the depth of the NTA panel, because a published
+    # 5-year total return is five years of data — just not data we recomputed.
+    has_long_window: bool = False
     warnings: List[str] = field(default_factory=list)
+
+    def mark_sources(self, min_years: float) -> None:
+        for w in ("r5", "r10", "r_all"):
+            if getattr(self, w) is not None and getattr(self, f"{w}_source") is None:
+                setattr(self, f"{w}_source", "computed")
+        self.has_long_window = (
+            (self.r5_source is not None)
+            or (self.r10_source is not None)
+            or (self.r_all is not None and (self.n_years or 0) >= min_years)
+        )
 
 
 def choose_series(conn, fund_id: str) -> Tuple[Optional[str], List[dict]]:
@@ -206,6 +228,7 @@ def compute(conn, fund_id: str, as_of: str = None) -> ReturnSet:
     if rs.n_years and rs.n_years > 0:
         rs.r_all = annualise(index[-1]["index"] / index[0]["index"], rs.n_years)
 
+    rs.mark_sources(5.0)
     if not any(d.get("dividend") for d in dividends_by_date(conn, fund_id)):
         rs.warnings.append(
             "no distributions found: the 'total return' equals NAV price growth "

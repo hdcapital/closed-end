@@ -5,9 +5,16 @@
 run:
   # Horizon for the forward-return model, in years.
   horizon_years: 5
-  # A fund needs at least this much NTA history to be ranked. Funds below it
+  # A fund needs at least this much return history to be ranked. Funds below it
   # go to the "insufficient history" appendix rather than being silently dropped.
   min_years_history: 5
+  # Whether a publisher-STATED 5-year total return counts toward that floor.
+  # It has to for the ASX leg to work at all: the monthly report's archive only
+  # reaches back ~24 months, while the report itself publishes a 5-year total
+  # return for every fund. Provenance is carried per window either way, so a
+  # stated figure is always visible as one. Set false to rank only on returns
+  # recomputed here — which today would leave the ASX universe unrankable.
+  allow_stated_returns_for_ranking: true
   # Price must be within this many days of the matched NTA observation for a
   # discount to be considered fresh enough to use.
   max_price_nta_gap_days: 45
