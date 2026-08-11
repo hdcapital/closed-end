@@ -58,6 +58,13 @@ result is decisive:
   Incorporation | World Region | Market | International Issuer | Company Market
   Cap (£m)`.
 * The LSE `/reports` pages are client-side rendered and link no spreadsheets.
+* Confirmed across **seven editions** — `_80` (May 2024), `_81`, `_82`, `_85`,
+  `_90`, `_95`, `_100` (Sep 2025) — spanning sixteen months. Identical header
+  every time. This is the file's design, not a bad edition.
+
+`src.probe_uk` is kept for checking future candidates by hand but no longer
+runs on every push: a question that has been answered should not keep
+occupying the log tail where the diagnostics belong.
 
 So this is a *company* list, not an instrument list. Without a TIDM there is no
 way to price a fund, and ICB Super-Sector is far too coarse to identify a
@@ -86,6 +93,10 @@ Until one is chosen the UK leg stays at zero funds and says so in the report.
   evidence coverage, which the `coverage` column states.
 - NZ is three seed funds, `verified: false`, listing-confirmed against NZX.
 - 70 tests + selftest, green offline and on a clean runner.
+- The benchmark-index exclusion is unit-tested (XSOAI/XJOAI rejected, AFI/WAM/
+  ARG/PE1 kept) but has **not yet been eyeballed in a live diagnose table** —
+  the probe output displaced it from the log tail in the run where it landed.
+  The next run shows it directly.
 
 
 

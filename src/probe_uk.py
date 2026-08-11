@@ -15,6 +15,14 @@ carrying both a ticker and an ISIN exists anywhere in it. That turns "the LSE
 leg doesn't work" into a fact about which file to use.
 
 Read-only and rate-limited like every other fetch here; it writes nothing.
+
+ANSWERED, 2026-08-11. Seven editions from `_80` (May 2024) through `_100`
+(Sep 2025) were fetched and every one carries the identical header with **no
+ticker and no ISIN**. The public issuer list is a company list, not an
+instrument list, and no amount of parsing will make it identify or price a
+fund. This module is kept for the next time a candidate URL needs checking —
+run it by hand — but it no longer runs on every push, because a question that
+has been answered should not keep occupying the log.
 """
 
 import sys

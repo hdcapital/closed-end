@@ -107,15 +107,6 @@ jobs:
         if: always()
         run: python -m src.diagnose
 
-      # Runs last, deliberately: its output is the answer to the open UK
-      # question, and the tail of the log is where that is easiest to read.
-      # The UK leg is the largest remaining gap; this reports which candidate
-      # instrument-list file actually carries a ticker+ISIN header, so the fix
-      # is one config line rather than another round of guessing.
-      - name: "Probe — locate the LSE instrument list"
-        continue-on-error: true
-        run: python -m src.probe_uk
-
       # The cached documents are the evidence: if a parser found nothing, the
       # bytes it was given are in here.
       - name: Upload store, report and raw documents
