@@ -203,3 +203,27 @@ def test_constructed_archive_covers_the_requested_depth():
     assert len(set(urls)) == 84
     oldest_year = min(int(u.split("-")[-2]) for u in urls)
     assert today.year - oldest_year >= 6
+
+
+def test_benchmark_index_rows_are_excluded_from_the_universe():
+    """The Spotlight sheet appends benchmark rows alongside the funds. They
+    parse perfectly and are not investable; XSOAI (Small Ordinaries
+    Accumulation Index) reached the top-20 forward-return table before this."""
+    from src import config
+    from src.universe.common import (compile_exclusions,
+                                     compile_ticker_exclusions, should_exclude)
+    cfg = config.load()
+    pats, tpats = compile_exclusions(cfg), compile_ticker_exclusions(cfg)
+
+    # Caught by ticker shape even when the name says nothing useful.
+    assert should_exclude("", "", pats, ticker="XSOAI", ticker_patterns=tpats)
+    assert should_exclude("", "", pats, ticker="XJOAI", ticker_patterns=tpats)
+    # And by name where the code is unremarkable.
+    assert should_exclude("S&P/ASX 200 Accumulation Index", "", pats,
+                          ticker="ABC", ticker_patterns=tpats)
+    # Ordinary LICs must survive both tests.
+    for t, n in [("AFI", "Australian Foundation Investment Company"),
+                 ("WAM", "WAM Capital Limited"),
+                 ("ARG", "Argo Investments Limited"),
+                 ("PE1", "Pengana Private Equity Trust")]:
+        assert should_exclude(n, "", pats, ticker=t, ticker_patterns=tpats) is None

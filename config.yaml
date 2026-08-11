@@ -56,6 +56,19 @@ universe:
     - "\\bICVC\\b"
     - "structured product"
     - "\\bwarrant"
+    # The ASX Spotlight sheet appends benchmark rows (S&P/ASX 200 Accumulation
+    # Index and friends) alongside the funds. They parse perfectly and are not
+    # investable vehicles; one reached the top-20 forward-return table before
+    # this was added.
+    - "\\bindex\\b"
+    - "accumulation index"
+    - "S&P/ASX"
+    - "\\bbenchmark\\b"
+  # Tickers excluded by shape. ASX index codes are X + four letters (XJOAI =
+  # S&P/ASX 200 Accumulation, XSOAI = Small Ordinaries Accumulation), a space
+  # no ordinary three-letter security code occupies.
+  ticker_exclusion_patterns:
+    - "^X[A-Z]{4}$"
 
 sources:
   asx:

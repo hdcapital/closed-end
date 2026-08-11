@@ -12,7 +12,7 @@ from typing import List, Optional, Tuple
 from .. import db, fetch
 from ..collectors import asx_monthly
 from ..util import utcnow_iso
-from .common import compile_exclusions, should_exclude
+from .common import compile_exclusions, compile_ticker_exclusions, should_exclude
 
 EXCHANGE = "ASX"
 CURRENCY = "AUD"
@@ -78,9 +78,11 @@ def build(conn, fetcher, cfg, report_url: str = None) -> dict:
     stats["fetched"] = len(parsed.records)
 
     patterns = compile_exclusions(cfg)
+    ticker_patterns = compile_ticker_exclusions(cfg)
     now = utcnow_iso()
     for rec in parsed.records:
-        reason = should_exclude(rec.name or "", rec.mandate or "", patterns)
+        reason = should_exclude(rec.name or "", rec.mandate or "", patterns,
+                                ticker=rec.ticker, ticker_patterns=ticker_patterns)
         row = {
             "fund_id": db.fund_id(EXCHANGE, rec.ticker),
             "exchange": EXCHANGE,

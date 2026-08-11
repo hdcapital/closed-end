@@ -10,12 +10,25 @@ def compile_exclusions(cfg) -> List[re.Pattern]:
     return [re.compile(p, re.IGNORECASE) for p in cfg.get("universe.exclusion_patterns")]
 
 
-def should_exclude(name: str, extra: str, patterns: List[re.Pattern]) -> Optional[str]:
+def compile_ticker_exclusions(cfg) -> List[re.Pattern]:
+    return [re.compile(p) for p in
+            cfg.get("universe.ticker_exclusion_patterns", []) or []]
+
+
+def should_exclude(name: str, extra: str, patterns: List[re.Pattern],
+                   ticker: str = None,
+                   ticker_patterns: List[re.Pattern] = None) -> Optional[str]:
     """Return the reason this vehicle is out of universe, or None to keep it.
 
     Excluded funds are still stored with status='excluded' and this reason, so
     the next run doesn't rediscover them and a human can check the call.
+
+    Ticker shape is tested as well as name, because the ASX report's benchmark
+    rows carry index codes whose *names* are not always self-describing.
     """
+    for p in (ticker_patterns or []):
+        if ticker and p.search(ticker.upper()):
+            return f"ticker {ticker} matches index-code pattern /{p.pattern}/"
     text = f"{name or ''} {extra or ''}"
     for p in patterns:
         m = p.search(text)
