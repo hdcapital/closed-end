@@ -8,6 +8,10 @@ on:
 
 concurrency: screen-weekly
 
+# The report-commit step pushes back to the branch.
+permissions:
+  contents: write
+
 jobs:
   refresh:
     runs-on: ubuntu-latest

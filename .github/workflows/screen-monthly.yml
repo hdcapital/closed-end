@@ -20,6 +20,10 @@ on:
 
 concurrency: screen-monthly
 
+# The report-commit step pushes back to the branch.
+permissions:
+  contents: write
+
 jobs:
   screen:
     runs-on: ubuntu-latest
